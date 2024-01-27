@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <functional>
 #include <initializer_list>
 #include <optional>
@@ -8,91 +9,9 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
-// NOTE: Lazy evaluation for both CPU and Vulkan mode
+#include "resource.hpp"
 
-struct Resource {
-	// TODO: variant of all pointer types and vk buffer
-	float *ptr = nullptr;
-	bool owner = false;
-	size_t elements = 0;
-
-	enum Type {
-		f32
-	} type;
-
-	enum Device {
-		eCPU,
-		eCUDA,
-		eVulkan
-	} device;
-
-	// Memset each element
-	void memset(float value) const {
-		for (size_t i = 0; i < elements; i++)
-			ptr[i] = value;
-	}
-
-	// Slices are not owners
-	std::optional <Resource> slice(long int start = 0, long int end = -1) const {
-		// NOTE: End is not inclusive
-		if (start >= elements)
-			return std::nullopt;
-		if (end < 0)
-			end = elements;
-
-		return Resource {
-			// TODO: careful here
-			&ptr[start],
-			false, size_t(end - start),
-			type, device
-		};
-	}
-
-	// TODO: .clone() function to duplicate (applies for slices as well)
-	// TODO: .to() function to transfer between devices
-
-	static std::optional <Resource> from(size_t elements, Resource::Type type, Resource::Device device) {
-		// TODO: custom allocator to track memory and hold pages for a particular device
-		float *ptr = nullptr;
-		switch (device) {
-		case eCPU:
-			ptr = new float[elements];
-		default:
-			break;
-		}
-
-		if (ptr)
-			return Resource { ptr, true, elements, type, device };
-		return std::nullopt;
-	}
-
-	static void drop(Resource &r) {
-		if (r.owner)
-			delete r.ptr;
-		r.ptr = nullptr;
-	}
-};
-
-auto format_as(Resource::Type type)
-{
-	return "Float32";
-}
-
-auto format_as(Resource::Device device)
-{
-	switch (device) {
-	case Resource::eCPU:
-		return "CPU";
-	case Resource::eCUDA:
-		return "CUDA";
-	case Resource::eVulkan:
-		return "Vulkan";
-	default:
-		break;
-	}
-
-	return "?";
-}
+// TODO: Lazy evaluation for both CPU and Vulkan mode
 
 struct Shape : std::vector <long int> {
 	using parent = std::vector <long int>;
@@ -206,13 +125,55 @@ auto format_as(const Shape &s)
 	return str + ")";
 }
 
+// NOTE: To enable more semantic programming, we use this wrapper over the
+// standard C++ optional type which can implicitly unpack into its underlying
+// type. The value checking capabilities are still present, however.
+template <typename T>
+struct weakly_optional : std::optional <T> {
+	using std::optional <T> ::optional;
+
+	operator T() const {
+		if (!this->has_value()) {
+			// TODO: custom logging
+			fmt::print("Implicitly converting weakly_optional tensor of null value\n");
+			std::exit(EXIT_FAILURE);
+		}
+
+		return this->value();
+	}
+
+	// TODO: only if it has an indexing
+	T::index_type operator[](int i) {
+		// Implicitly unpack
+		T value = *this;
+		return value[i];
+	}
+};
+
 struct Tensor {
 	Resource buffer;
-	std::optional <Shape> shape = std::nullopt;
+	std::optional <Shape> shape = std::nullopt; // TODO: make this weakly optional
+
+	// Gradient tracking; only for backward pass
+	// TODO: store gradients of all tensors in an operation separately...
+	struct {
+		bool enabled = false;
+		std::optional <Resource> value;
+	} grad;
+
+	// Type definitions for templates
+	using index_type = Tensor;
+
+	// Assigning values
+	Tensor &operator=(float v) {
+		// TODO: type checking
+		buffer.memset(v);
+		return *this;
+	}
 
 	// Indexing the topmost dimension
 	// TODO: negative dimensions as well...
-	std::optional <Tensor> operator[](size_t i) const {
+	weakly_optional <Tensor> operator[](size_t i) const {
 		if (!shape || i >= (*shape)[0])
 			return std::nullopt;
 
@@ -224,7 +185,7 @@ struct Tensor {
 	}
 
 	// Reshaping tensors
-	std::optional <Tensor> reshape(const Shape &other) const {
+	weakly_optional <Tensor> reshape(const Shape &other) const {
 		if (auto reshaped = shape->reshape(other)) {
 			Resource reshaped_buffer = *buffer.slice(); // Gets the whole thing for free
 			return Tensor { reshaped_buffer, *reshaped };
@@ -234,37 +195,135 @@ struct Tensor {
 	}
 
 	template <std::integral ... Ts>
-	std::optional <Tensor> reshape(Ts ... sizes) const {
+	weakly_optional <Tensor> reshape(Ts ... sizes) const {
 		std::initializer_list <long int> other { (long int) sizes... };
 		return reshape(other);
 	}
 
-	// Zero tensor
-	static std::optional <Tensor> zeros(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
-		if (auto buffer = Resource::from(shape.elements(), type, device)) {
-			// TODO: memset
-			return Tensor { *buffer, shape };
+	// Transposing 2D tensors
+	weakly_optional <Tensor> transpose() const {
+		if (shape->size() != 2)
+			return std::nullopt;
+
+		size_t rows = shape.value()[0];
+		size_t cols = shape.value()[1];
+		Shape transposed_shape { cols, rows };
+		Tensor transposed = Tensor::blank(transposed_shape);
+
+		// Write the elements
+		for (size_t i = 0; i < rows; i++) {
+			for (size_t j = 0; j < cols; j++)
+				transposed.buffer.ptr[j * rows + i] = buffer.ptr[i * cols + j];
 		}
+
+		return transposed;
+	}
+
+	// Cloning tensors; does not transfer tracking
+	weakly_optional <Tensor> clone() const {
+		Resource cloned_buffer = *buffer.clone();
+		return Tensor { cloned_buffer, shape };
+	}
+
+	// Slicing through a single dimension
+	weakly_optional <Tensor> slice(size_t start, size_t end, size_t dim = 0) {
+		// TODO: allow negatives
+		if (dim >= shape->size())
+			return std::nullopt;
+
+		// NOTE: End is not inclusive
+		if (start >= end || start > shape.value()[0] || end > shape.value()[0])
+			return std::nullopt;
+
+		size_t prod_before = 1;
+		size_t prod_after = 1;
+		for (size_t i = 0; i < shape->size(); i++) {
+			prod_before *= (i < dim) ? shape.value()[i] : 1;
+			prod_after *= (i > dim) ? shape.value()[i] : 1;
+		}
+
+		Shape sliced_shape = *shape;
+		sliced_shape[dim] = end - start;
+
+		Tensor sliced = Tensor::blank(sliced_shape);
+		for (size_t i = 0; i < prod_before; i++) {
+			// TODO: put k in the inner loop?
+			for (size_t j = 0; j < end - start; j++) {
+				for (size_t k = 0; k < prod_after; k++) {
+					size_t ithis = i * shape.value()[dim] * prod_after + j * prod_after + k;
+					size_t isliced = i * (end - start) * prod_after + j * prod_after + k;
+					sliced.buffer.ptr[isliced] = buffer.ptr[ithis];
+				}
+			}
+		}
+
+		return sliced;
+	}
+
+	// Enable gradient tracking; allocates the gradient value buffer ahead of time
+	// TODO: maybe remove? set certain tensors to tracking by address with a gradient tracker type?
+	weakly_optional <Tensor> tracked() const {
+		Tensor tracked_tensor = *this;
+		tracked_tensor.grad.enabled = true;
+		if (auto grad_buffer = buffer.clone())
+			tracked_tensor.grad.value = *grad_buffer;
+
 		return std::nullopt;
 	}
 
-	static std::optional <Tensor> zeros_like(const Tensor &t) {
-		if (auto buffer = Resource::from(t.shape.value().elements(), t.buffer.type, t.buffer.device))
+	// Blank tensor of a given shape; no memset-ing
+	static weakly_optional <Tensor> blank(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+		if (auto buffer = Resource::from(shape.elements(), type, device))
+			return Tensor { *buffer, shape };
+
+		return std::nullopt;
+	}
+
+	// Zero tensor
+	static weakly_optional <Tensor> zeros(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+		if (auto buffer = Resource::from(shape.elements(), type, device)) {
+			buffer->memset(0.0f);
+			return Tensor { *buffer, shape };
+		}
+
+		return std::nullopt;
+	}
+
+	static weakly_optional <Tensor> zeros_like(const Tensor &t) {
+		if (auto buffer = Resource::from(t.shape.value().elements(), t.buffer.type, t.buffer.device)) {
+			buffer->memset(0.0f);
 			return Tensor { *buffer, t.shape.value() };
+		}
+
 		return std::nullopt;
 	}
 
 	// One tensor
-	static std::optional <Tensor> ones(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+	static weakly_optional <Tensor> ones(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
 			buffer->memset(1.0f);
 			return Tensor { *buffer, shape };
 		}
+
+		return std::nullopt;
+	}
+
+	// Identity tensor
+	// TODO: expand for multidim tensors
+	static weakly_optional <Tensor> identity(size_t N, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+		Shape shape { N, N };
+		if (auto buffer = Resource::from(shape.elements(), type, device)) {
+			buffer->memset(0.0f);
+			for (size_t i = 0; i < N; i++)
+				buffer->ptr[i * N + i] = 1.0f;
+			return Tensor { *buffer, shape };
+		}
+
 		return std::nullopt;
 	}
 
 	// Tensor concatenation; explicit dimension must be provided
-	static std::optional <Tensor> concat(const Tensor &A, const Tensor &B, size_t dim) {
+	static weakly_optional <Tensor> concat(const Tensor &A, const Tensor &B, size_t dim) {
 		// TODO: allow for negative dim (int)
 
 		// Make sure the shapes match except for the provided dimension
@@ -324,7 +383,7 @@ struct Tensor {
 	// TODO: stack (new dim) and cat (dim=-1)
 
 	// Random tensor
-	static std::optional <Tensor> randn(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+	static weakly_optional <Tensor> randn(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
 			std::random_device rd;
 			std::mt19937 generator(rd());
@@ -338,7 +397,7 @@ struct Tensor {
 
 	static void drop(Tensor &t) {
 		Resource::drop(t.buffer);
-		t.shape = {};
+		t.shape = std::nullopt;
 	}
 };
 
@@ -372,9 +431,9 @@ auto format_as(const Tensor &t)
 
 // Autograd functions; note that function can only return a single tensor (tuples are expanded to separate entities)
 using tensor_list = std::vector <Tensor>;
-using forward     = std::function <std::optional <Tensor> (const tensor_list &)>;
-using pushforward = std::function <Tensor (const tensor_list &)>;
-using pullback    = std::function <tensor_list (const Tensor &)>;
+// using forward     = std::function <std::optional <Tensor> (const tensor_list &)>;
+// using pushforward = std::function <Tensor (const tensor_list &)>;
+// using pullback    = std::function <tensor_list (const Tensor &)>;
 
 // TODO: this or struct with such functions
 // struct Function {
@@ -390,25 +449,39 @@ using pullback    = std::function <tensor_list (const Tensor &)>;
 struct Function {
 	virtual ~Function() {}
 
-	virtual std::optional <Tensor> forward(const tensor_list &) const = 0;
+	virtual weakly_optional <Tensor> forward_args(const tensor_list &) const = 0;
 
 	// TODO: wrapper function to accept variadic list of tensors
+	template <typename ... Args>
+	// TODO: require tensorial
+	weakly_optional <Tensor> forward(const Args & ...args) const {
+		std::initializer_list <Tensor> ts { args... };
+		return forward_args(ts);
+	}
 };
 
 // Standard kernels
 // TODO: namespace
-// TODO: template operation for element wise c = op(a, b)
-template <size_t op = 1>
+enum ewop_mode {
+	kadd,
+	ksub
+};
+
+template <ewop_mode op>
 void cpu_kernel_ewop(const Resource &A, const Resource &B, Resource &C)
 {
 	// TODO: openmp
-	for (size_t i = 0; i < A.elements; i++)
-		C.ptr[i] = A.ptr[i] + B.ptr[i];
+	for (size_t i = 0; i < A.elements; i++) {
+		if constexpr (op == kadd)
+			C.ptr[i] = A.ptr[i] + B.ptr[i];
+		if constexpr (op == ksub)
+			C.ptr[i] = A.ptr[i] - B.ptr[i];
+	}
 }
 
 // Standard functions
 struct _add : Function {
-	 std::optional <Tensor> forward(const tensor_list &ts) const {
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) const override {
 		// assert size = 2
 		// TODO: check sizes here
 
@@ -419,11 +492,29 @@ struct _add : Function {
 		if (A.shape != B.shape)
 			return std::nullopt;
 
-		Tensor out = *Tensor::zeros_like(A);
-		cpu_kernel_ewop(A.buffer, B.buffer, out.buffer);
+		Tensor out = Tensor::zeros_like(A);
+		cpu_kernel_ewop <kadd> (A.buffer, B.buffer, out.buffer);
 		return out;
 	}
 } static const add;
+
+struct _sub : Function {
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) const override {
+		// assert size = 2
+		// TODO: check sizes here
+
+		const Tensor &A = ts[0];
+		const Tensor &B = ts[1];
+
+		// TODO: issue warning to logger
+		if (A.shape != B.shape)
+			return std::nullopt;
+
+		Tensor out = Tensor::zeros_like(A);
+		cpu_kernel_ewop <ksub> (A.buffer, B.buffer, out.buffer);
+		return out;
+	}
+} static const sub;
 
 // Machine learning utilities
 
@@ -451,27 +542,26 @@ void cpu_kernel_gemm(const Resource &A, const Resource &B, Resource &C, size_t N
 	}
 }
 
-struct Dense : Function {
+struct Linear : Function {
 	size_t in;
 	size_t out;
 	bool bias;
 	Tensor W; // Combines weight and bias into a single matrix
 
-	// TODO: bool for grad
-	std::optional <Tensor> forward(const tensor_list &ts) const {
+	weakly_optional <Tensor> forward_args(const tensor_list &ts) const override {
 		const Tensor &A = ts[0];
 		if (auto X = A.reshape(-1, in)) {
 			Shape pad_shape = *X->shape;
 			pad_shape[-1] = 1;
 
-			Tensor padding = *Tensor::ones(pad_shape);
-			Tensor gemm_in = *Tensor::concat(*X, padding, 1);
+			Tensor padding = Tensor::ones(pad_shape);
+			Tensor gemm_in = Tensor::concat(X, padding, 1);
 
 			Shape out_shape = *A.shape;
 			out_shape[-1] = out;
 
 			// TODO: differentiate between zeros (memset) and blank (shape only, no memset)
-			Tensor gemm_out = *Tensor::zeros(out_shape);
+			Tensor gemm_out = Tensor::blank(out_shape);
 
 			cpu_kernel_gemm
 			(
@@ -487,9 +577,64 @@ struct Dense : Function {
 		return std::nullopt;
 	}
 
+	weakly_optional <Tensor> pushforward(const tensor_list &ts) const {
+		const Tensor &A = ts[0];
+		if (auto X = A.reshape(-1, in)) {
+			Shape pad_shape = *X->shape;
+			pad_shape[-1] = 1;
+
+			// TODO: only pad if there is a bias
+			Tensor padding = Tensor::zeros(pad_shape);
+			Tensor gemm_in = Tensor::concat(X, padding, 1);
+
+			Shape out_shape = *A.shape;
+			out_shape[-1] = out;
+
+			Tensor gemm_out = Tensor::blank(out_shape);
+
+			cpu_kernel_gemm
+			(
+				gemm_in.buffer, W.buffer, gemm_out.buffer,
+				gemm_in.shape.value()[0],
+				gemm_in.shape.value()[1],
+				W.shape.value()[1]
+			);
+
+			return gemm_out;
+		}
+
+		return std::nullopt;
+	}
+
+	// TODO: also need original inputs always
+	// TODO: need a different structure for this...
+	tensor_list pullback(const Tensor &delta) const {
+		Tensor Wt = W.transpose();
+		if (auto X = delta.reshape(-1, out)) {
+			// TODO: different depending on the presence of the bias
+			Shape int_shape = *delta.shape;
+			int_shape[-1] = in + 1;
+
+			Tensor gemm_int = Tensor::blank(int_shape);
+
+			cpu_kernel_gemm
+			(
+				X->buffer, W.buffer, gemm_int.buffer,
+				X->shape.value()[0],
+				X->shape.value()[1],
+				Wt.shape.value()[1]
+			);
+
+			return { gemm_int.slice(0, int_shape[-1] - 1, int_shape.size() - 1) };
+		}
+
+		return {};
+	}
+
 	// Construction
-	static std::optional <Dense> from(size_t in, size_t out, bool bias = true) {
-		Dense dense;
+	static std::optional <Linear> from(size_t in, size_t out, bool bias = true) {
+		// NOTE: The weight-bias matrix is in transposed form
+		Linear dense;
 		dense.in = in;
 		dense.out = out;
 		dense.bias = bias;
@@ -498,7 +643,8 @@ struct Dense : Function {
 	}
 };
 
-// NOTE: Computation graph, that is evaluated lazily... use auto normally
+// TODO: parameters() for computation graph returns a list of tensors with grad enabled only
+// TODO: Computation graph, that is evaluated lazily... use auto normally
 struct Node {
 	const Function *const ftn;
 	// Function ftn;
@@ -508,13 +654,51 @@ struct Node {
 // TODO: latex plotting and live displaying?
 
 // Operator overloads
+Tensor operator*(float k, const Tensor &A)
+{
+	// TODO: elements method for tensor
+	Tensor out = A.clone();
+	for (size_t i = 0; i < out.shape->elements(); i++)
+		out.buffer.ptr[i] *= k;
+
+	return out;
+}
+
+Tensor operator+(float k, const Tensor &A)
+{
+	// TODO: elements method for tensor
+	Tensor out = A.clone();
+	for (size_t i = 0; i < out.shape->elements(); i++)
+		out.buffer.ptr[i] += k;
+
+	return out;
+}
+
+weakly_optional <Tensor> operator+(const Tensor &A, const Tensor &B)
+{
+	return add.forward(A, B);
+}
+
+weakly_optional <Tensor> operator-(const Tensor &A, const Tensor &B)
+{
+	return sub.forward(A, B);
+}
 
 int main()
 {
-	Tensor A = *Tensor::randn({ 2, 2 });
-	fmt::print("A: {}\n", A);
+	Tensor A = Tensor::randn({ 2, 2 });
+	Tensor B = Tensor::randn({ 2, 4 });
+	fmt::print("\nB: {}\n", B);
 
-	Dense dense = *Dense::from(2, 2);
-	Tensor out = *dense.forward({ A });
-	fmt::print("out: {}\n", out);
+	fmt::print("Running optimization:\n");
+
+	Linear dense = *Linear::from(2, 4);
+	for (size_t i = 0; i < 100; i++) {
+		Tensor out = dense.forward(A);
+		fmt::print("\nA: {} -> out: {}\n", A, out);
+		Tensor delta = 2.0f * (out - B);
+		fmt::print("delta: {}\n", delta);
+		Tensor delta_A = dense.pullback(delta)[0];
+		A = A - 0.01f * delta_A;
+	}
 }
