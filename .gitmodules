@@ -1,0 +1,3 @@
+[submodule "littlevk"]
+	path = littlevk
+	url = https://github.com/iveevi/littlevk
