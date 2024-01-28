@@ -7,52 +7,13 @@
 #include <fmt/core.h>
 #include <fmt/format.h>
 
-#include "resource.hpp"
 #include "tensor.hpp"
 #include "gradients.hpp"
-#include "kernels.hpp"
 #include "autograd.hpp"
 
 // TODO: latex plotting and live displaying?
 
-// Operator overloads
-Tensor operator*(float k, const Tensor &A)
-{
-	// TODO: elements method for tensor
-	Tensor out = A.clone();
-	for (size_t i = 0; i < out.shape->elements(); i++)
-		out.buffer.ptr[i] *= k;
-
-	return out;
-}
-
-Tensor operator+(float k, const Tensor &A)
-{
-	// TODO: elements method for tensor
-	Tensor out = A.clone();
-	for (size_t i = 0; i < out.shape->elements(); i++)
-		out.buffer.ptr[i] += k;
-
-	return out;
-}
-
-weakly_optional <Tensor> operator+(const Tensor &A, const Tensor &B)
-{
-	return ops::add.forward(A, B);
-}
-
-weakly_optional <Tensor> operator-(const Tensor &A, const Tensor &B)
-{
-	return ops::sub.forward(A, B);
-}
-
-weakly_optional <Tensor> operator*(const Tensor &A, const Tensor &B)
-{
-	return ops::mul.forward(A, B);
-}
-
 // Function composition via chaining
-// using ChainProxy = std::vector <Function *>;
 struct Chain;
 
 struct ChainProxy : std::vector <Function *> {
