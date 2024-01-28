@@ -41,6 +41,18 @@ struct Resource {
 		};
 	}
 
+	// Copy from another resource
+	bool copy(const Resource &r) {
+		if (elements != r.elements)
+			return false;
+
+		// TODO: check that the device/API is the same
+		if (ptr != r.ptr)
+			std::memcpy(ptr, r.ptr, elements * sizeof(float));
+
+		return true;
+	}
+
 	// Cloning resources
 	std::optional <Resource> clone() const {
 		// TODO: infer allocator

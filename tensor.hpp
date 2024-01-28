@@ -218,6 +218,14 @@ struct Tensor {
 		return transposed;
 	}
 
+	// Copy tensor data
+	bool copy(const Tensor &other) {
+		if (shape != other.shape)
+			return false;
+
+		return buffer.copy(other.buffer);
+	}
+
 	// Cloning tensors; does not transfer tracking
 	weakly_optional <Tensor> clone() const {
 		Resource cloned_buffer = *buffer.clone();
@@ -436,3 +444,13 @@ auto format_as(const Tensor &t)
 	std::string header = "<Tensor: " + fmt::format("{}; {}; {}", *t.shape, t.buffer.type, t.buffer.device) + "> = ";
 	return header + string_data(t);
 }
+
+// TODO: implementation file for Tensor
+
+// Operators
+Tensor operator*(float, const Tensor &);
+Tensor operator+(float, const Tensor &);
+
+weakly_optional <Tensor> operator+(const Tensor &, const Tensor &);
+weakly_optional <Tensor> operator-(const Tensor &, const Tensor &);
+weakly_optional <Tensor> operator*(const Tensor &, const Tensor &);
