@@ -453,17 +453,6 @@ using tensor_list = std::vector <Tensor>;
 // using pushforward = std::function <Tensor (const tensor_list &)>;
 // using pullback    = std::function <tensor_list (const Tensor &)>;
 
-// TODO: this or struct with such functions
-// struct Function {
-// 	// TODO: implementations for each device...
-//
-// 	forward fwd;
-// 	std::optional <pushforward> frule;
-// 	std::optional <pullback> rrule;
-//
-// 	// TODO: some way to test each function
-// };
-
 struct Function {
 	virtual ~Function() {}
 
@@ -700,8 +689,6 @@ struct _sigmoid : Function {
 
 // Machine learning utilities
 
-// TODO: chain(...) builds a composite Function
-
 // TODO: device
 void cpu_kernel_gemm(const Resource &A, const Resource &B, Resource &C, size_t N, size_t M, size_t K)
 {
@@ -815,7 +802,7 @@ struct Linear : Function {
 	}
 
 	// Construction
-	static std::optional <Linear> from(size_t in, size_t out, bool bias = true) {
+	static Linear from(size_t in, size_t out, bool bias = true) {
 		// NOTE: The weight-bias matrix is in transposed form
 		Linear dense;
 		dense.in = in;
@@ -824,15 +811,6 @@ struct Linear : Function {
 		dense.W = *Tensor::randn({ in + bias, out });
 		return dense;
 	}
-};
-
-// TODO: parameters() for computation graph returns a list of tensors with grad enabled only
-// TODO: Computation graph, that is evaluated lazily... use auto normally
-// .backward() only for these graphs
-struct Node {
-	const Function *const ftn;
-	// Function ftn;
-	// std::vector <Node> up;
 };
 
 // TODO: latex plotting and live displaying?
@@ -873,6 +851,93 @@ weakly_optional <Tensor> operator*(const Tensor &A, const Tensor &B)
 	return ops::mul.forward(A, B);
 }
 
+// Function composition via chaining
+// using ChainProxy = std::vector <Function *>;
+struct Chain;
+
+struct ChainProxy : std::vector <Function *> {
+	using std::vector <Function *> ::vector;
+
+	operator Chain();
+};
+
+template <typename T>
+requires std::is_base_of_v <Function, T>
+static Function *auto_allocate(T t) {
+	return new T(t);
+}
+
+template <typename A, typename B>
+requires std::is_base_of_v <Function, A> && std::is_base_of_v <Function, B>
+ChainProxy operator>>(const A &fa, const B &fb)
+{
+	return { auto_allocate(fa), auto_allocate(fb) };
+}
+
+template <typename T>
+requires std::is_base_of_v <Function, T>
+ChainProxy operator>>(const ChainProxy &cp, const T &ft)
+{
+	ChainProxy ret = cp;
+	ret.push_back(auto_allocate(ft));
+	return ret;
+}
+
+struct Chain : Function {
+	// TODO: allow for non-linear chains
+	std::vector <tensor_list> node_args;
+	std::vector <Function *> nodes;
+
+	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		node_args = { ts };
+
+		Tensor out;
+		for (size_t i = 0; i < nodes.size(); i++) {
+			out = nodes[i]->forward_args(node_args.back());
+			node_args.push_back({ out });
+		}
+
+		return out;
+	}
+
+	// NOTE: We cannot have the usual pullback here since interim
+	// arguments are not given for the usual signature
+	tensor_list pullback(const Tensor &delta) const {
+		Tensor d = delta;
+		for (long int i = nodes.size() - 1; i >= 0; i--) {
+			// TODO: careful when doing multi input pullbacks that matter (such as sub)
+			d = nodes[i]->pullback_args(node_args[i], d)[0];
+		}
+
+		return { d };
+	}
+
+	// TODO: override the message for pullback_args
+
+	// Chain from already allocated functions
+	static Chain from(const std::vector <Function *> &nodes) {
+		Chain chain;
+		chain.nodes = nodes;
+		return chain;
+	}
+
+	// Chain by creating duplicate functions on the heap
+	template <typename ... Args>
+	static Chain from(const Args & ...args) {
+		Chain chain;
+		chain.nodes = { auto_allocate(args)... };
+		return chain;
+	}
+
+	// TODO: operator<< to chain easier
+};
+
+ChainProxy::operator Chain()
+{
+	std::vector <Function *> transfered(begin(), end());
+	return Chain::from(transfered);
+}
+
 int main()
 {
 	Tensor A = Tensor::randn({ 2, 2 });
@@ -881,60 +946,22 @@ int main()
 
 	fmt::print("Running optimization:\n");
 
-	Linear dense1 = *Linear::from(2, 5);
-	Linear dense2 = *Linear::from(5, 4);
+	Linear dense1 = Linear::from(2, 5);
+	Linear dense2 = Linear::from(5, 4);
 
 	// TODO: Two methods for easier composition: chains (creates a new function)
 	// and dynamic compute graphs (lazily evaluated, then backward on them())
 
-	struct Chain : Function {
-		// TODO: allow for non-linear chains
-		std::vector <tensor_list> node_args;
-		std::vector <Function *> nodes;
+	// Chain dnn = Chain::from({
+	// 	new Linear(*Linear::from(2, 5)),
+	// 	new ops::_relu(ops::relu),
+	// 	new Linear(*Linear::from(5, 4)),
+	// });
 
-		weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
-			node_args = { ts };
-
-			Tensor out;
-			for (size_t i = 0; i < nodes.size(); i++) {
-				out = nodes[i]->forward_args(node_args.back());
-				node_args.push_back({ out });
-			}
-
-			return out;
-		}
-
-                // NOTE: We cannot have the usual pullback here since interim
-                // arguments are not given for the usual signature
-                tensor_list pullback(const Tensor &delta) const {
-			Tensor d = delta;
-			for (long int i = nodes.size() - 1; i >= 0; i--) {
-				// TODO: careful when doing multi input pullbacks that matter (such as sub)
-				d = nodes[i]->pullback_args(node_args[i], d)[0];
-			}
-
-			return { d };
-		}
-
-		// TODO: override the message for pullback_args
-
-		static Chain from(std::vector <Function *> &&nodes) {
-			Chain chain;
-			chain.nodes = std::move(nodes);
-			return chain;
-		}
-
-		// TODO: operator<< to chain easier
-	};
-
-	Chain dnn = Chain::from({
-		new Linear(*Linear::from(2, 5)),
-		new ops::_relu(ops::relu),
-		new Linear(*Linear::from(5, 4)),
-	});
+	// Chain dnn = Chain::from(Linear::from(2, 5), ops::relu, Linear::from(5, 4));
+	Chain dnn = Linear::from(2, 5) >> ops::relu >> Linear::from(5, 4);
 
 	for (size_t i = 0; i < 10; i++) {
-		// Tensor out = dense2.forward(ops::relu.forward(dense1.forward(A)));
 		Tensor out = dnn.forward(A);
 
 		// Tensor out = dense1.forward(A);
@@ -943,11 +970,6 @@ int main()
 		fmt::print("  > delta: {}\n", delta);
 
 		{
-			// Tensor out = A;
-			// Tensor dense1_out = dense1.forward(A);
-			// Tensor relu_out = ops::sigmoid.forward(dense1_out);
-			// Tensor dens2_out = dense2.forward(relu_out);
-
 			Tensor dnn_out = out;
 			Tensor sub_out = dnn_out - B;
 			Tensor square_out = ops::square.forward(sub_out);
@@ -968,18 +990,6 @@ int main()
 
 			Tensor delta_out = dnn.pullback(delta_dnn)[0];
 			fmt::print("  > delta out: {}\n", delta_out);
-
-			// Tensor delta_dense2 = ops::sub.pullback_args({ dense2_out, B }, delta_sub)[0];
-			// fmt::print("  > delta dense2: {}\n", delta_dense2);
-			//
-			// Tensor delta_relu = dense2.pullback_args({ relu_out }, delta_dense2)[0];
-			// fmt::print("  > delta relu: {}\n", delta_relu);
-			//
-			// Tensor delta_dense1 = ops::relu.pullback_args({ dense1_out }, delta_relu)[0];
-			// fmt::print("  > delta dense1: {}\n", delta_dense1);
-			//
-			// Tensor delta_out = dense1.pullback_args({ out, B }, delta_dense1)[0];
-			// fmt::print("  > delta out: {}\n", delta_out);
 
 			A = A - 0.01f * delta_out;
 		}
