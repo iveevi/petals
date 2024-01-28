@@ -136,6 +136,7 @@ struct weakly_optional : std::optional <T> {
 		if (!this->has_value()) {
 			// TODO: custom logging
 			fmt::print("Implicitly converting weakly_optional tensor of null value\n");
+			// std::terminate();
 			std::exit(EXIT_FAILURE);
 		}
 
@@ -232,7 +233,7 @@ struct Tensor {
 			return std::nullopt;
 
 		// NOTE: End is not inclusive
-		if (start >= end || start > shape.value()[0] || end > shape.value()[0])
+		if (start >= end || start > shape.value()[dim] || end > shape.value()[dim])
 			return std::nullopt;
 
 		size_t prod_before = 1;
@@ -279,6 +280,13 @@ struct Tensor {
 		return std::nullopt;
 	}
 
+	static weakly_optional <Tensor> blank_like(const Tensor &t) {
+		if (auto buffer = Resource::from(t.shape.value().elements(), t.buffer.type, t.buffer.device))
+			return Tensor { *buffer, t.shape.value() };
+
+		return std::nullopt;
+	}
+
 	// Zero tensor
 	static weakly_optional <Tensor> zeros(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
@@ -303,6 +311,15 @@ struct Tensor {
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
 			buffer->memset(1.0f);
 			return Tensor { *buffer, shape };
+		}
+
+		return std::nullopt;
+	}
+
+	static weakly_optional <Tensor> ones_like(const Tensor &t) {
+		if (auto buffer = Resource::from(t.shape.value().elements(), t.buffer.type, t.buffer.device)) {
+			buffer->memset(1.0f);
+			return Tensor { *buffer, t.shape.value() };
 		}
 
 		return std::nullopt;
@@ -395,6 +412,7 @@ struct Tensor {
 		return std::nullopt;
 	}
 
+	// TODO: manual or implicit/automatic?
 	static void drop(Tensor &t) {
 		Resource::drop(t.buffer);
 		t.shape = std::nullopt;
@@ -449,12 +467,28 @@ using tensor_list = std::vector <Tensor>;
 struct Function {
 	virtual ~Function() {}
 
-	virtual weakly_optional <Tensor> forward_args(const tensor_list &) const = 0;
+	// Checking functions
+	template <size_t N>
+	[[gnu::always_inline]]
+	static void assert_nargs(const tensor_list &args) {
+		// TODO: log error then exit
+		if (args.size() != N)
+			throw std::runtime_error(fmt::format("Expected {} arguments, got {}\n", N, args.size()));
+	}
+
+	// Always need a way to get the primal value
+	virtual weakly_optional <Tensor> forward_args(const tensor_list &) = 0;
+
+	// TODO: change the output
+	virtual tensor_list pullback_args(const tensor_list &, const Tensor &) const {
+		// TODO: give each function a name
+		throw std::runtime_error("Function has not implemented pullback\n");
+	}
 
 	// TODO: wrapper function to accept variadic list of tensors
 	template <typename ... Args>
 	// TODO: require tensorial
-	weakly_optional <Tensor> forward(const Args & ...args) const {
+	weakly_optional <Tensor> forward(const Args & ...args) {
 		std::initializer_list <Tensor> ts { args... };
 		return forward_args(ts);
 	}
@@ -464,7 +498,9 @@ struct Function {
 // TODO: namespace
 enum ewop_mode {
 	kadd,
-	ksub
+	ksub,
+	kmul,
+	kdiv
 };
 
 template <ewop_mode op>
@@ -476,15 +512,19 @@ void cpu_kernel_ewop(const Resource &A, const Resource &B, Resource &C)
 			C.ptr[i] = A.ptr[i] + B.ptr[i];
 		if constexpr (op == ksub)
 			C.ptr[i] = A.ptr[i] - B.ptr[i];
+		if constexpr (op == kmul)
+			C.ptr[i] = A.ptr[i] * B.ptr[i];
+		if constexpr (op == kdiv)
+			C.ptr[i] = A.ptr[i] / B.ptr[i];
 	}
 }
 
-// Standard functions
-struct _add : Function {
-	 weakly_optional <Tensor> forward_args(const tensor_list &ts) const override {
-		// assert size = 2
-		// TODO: check sizes here
+// Standard operations
+namespace ops {
 
+struct _add : Function {
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		assert_nargs <2> (ts);
 		const Tensor &A = ts[0];
 		const Tensor &B = ts[1];
 
@@ -492,17 +532,15 @@ struct _add : Function {
 		if (A.shape != B.shape)
 			return std::nullopt;
 
-		Tensor out = Tensor::zeros_like(A);
+		Tensor out = Tensor::blank_like(A);
 		cpu_kernel_ewop <kadd> (A.buffer, B.buffer, out.buffer);
 		return out;
 	}
-} static const add;
+} static add;
 
 struct _sub : Function {
-	 weakly_optional <Tensor> forward_args(const tensor_list &ts) const override {
-		// assert size = 2
-		// TODO: check sizes here
-
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		assert_nargs <2> (ts);
 		const Tensor &A = ts[0];
 		const Tensor &B = ts[1];
 
@@ -510,11 +548,155 @@ struct _sub : Function {
 		if (A.shape != B.shape)
 			return std::nullopt;
 
-		Tensor out = Tensor::zeros_like(A);
+		Tensor out = Tensor::blank_like(A);
 		cpu_kernel_ewop <ksub> (A.buffer, B.buffer, out.buffer);
 		return out;
 	}
-} static const sub;
+
+
+	 tensor_list pullback_args(const tensor_list &ts, const Tensor &delta) const override {
+		assert_nargs <2> (ts);
+		const Tensor &A = ts[0];
+		const Tensor &B = ts[1];
+
+		if (A.shape != B.shape)
+			return {};
+
+		Tensor outA = Tensor::blank_like(A);
+		Tensor outB = Tensor::blank_like(B);
+
+		for (size_t i = 0; i < A.shape->elements(); i++) {
+			outA.buffer.ptr[i] = delta.buffer.ptr[i];
+			outB.buffer.ptr[i] = -delta.buffer.ptr[i];
+		}
+
+		return { outA, outB };
+	 }
+} static sub;
+
+struct _mul : Function {
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		assert_nargs <2> (ts);
+		const Tensor &A = ts[0];
+		const Tensor &B = ts[1];
+
+		// TODO: issue warning to logger
+		if (A.shape != B.shape)
+			return std::nullopt;
+
+		Tensor out = Tensor::blank_like(A);
+		cpu_kernel_ewop <kmul> (A.buffer, B.buffer, out.buffer);
+		return out;
+	}
+} static mul;
+
+struct _div : Function {
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		assert_nargs <2> (ts);
+		const Tensor &A = ts[0];
+		const Tensor &B = ts[1];
+
+		// TODO: issue warning to logger
+		if (A.shape != B.shape)
+			return std::nullopt;
+
+		Tensor out = Tensor::blank_like(A);
+		cpu_kernel_ewop <kdiv> (A.buffer, B.buffer, out.buffer);
+		return out;
+	}
+} static div;
+
+struct _square : Function {
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		cpu_kernel_ewop <kmul> (A.buffer, A.buffer, out.buffer);
+		return out;
+	}
+
+	 tensor_list pullback_args(const tensor_list &ts, const Tensor &delta) const override {
+		 // TODO: multiply as well...
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		for (size_t i = 0; i < A.shape->elements(); i++)
+			out.buffer.ptr[i] = 2 * delta.buffer.ptr[i] * A.buffer.ptr[i];
+
+		return { out };
+	 }
+} static square;
+
+struct _sum : Function {
+	size_t dim = 0;
+
+	// TODO: dimension
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank({});
+		float sum = 0.0f;
+		for (size_t i = 0; i < A.shape->elements(); i++)
+			sum += A.buffer.ptr[i];
+		out.buffer.ptr[0] = sum;
+		return out;
+	}
+
+	 tensor_list pullback_args(const tensor_list &ts, const Tensor &delta) const override {
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		for (size_t i = 0; i < A.shape->elements(); i++)
+			out.buffer.ptr[i] = delta.buffer.ptr[0];
+
+		return { out };
+	 }
+} static sum;
+
+// Classic activations
+struct _relu : Function {
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		for (size_t i = 0; i < A.shape->elements(); i++) {
+			float x = A.buffer.ptr[i];
+			out.buffer.ptr[i] = std::fmax(0, x);
+		}
+
+		return out;
+	}
+
+	 tensor_list pullback_args(const tensor_list &ts, const Tensor &delta) const override {
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		for (size_t i = 0; i < A.shape->elements(); i++) {
+			float x = A.buffer.ptr[i];
+			out.buffer.ptr[i] = delta.buffer.ptr[i] * ((x > 0) ? 1 : 0);
+		}
+
+		return { out };
+	 }
+} static relu;
+
+struct _sigmoid : Function {
+	 weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		for (size_t i = 0; i < A.shape->elements(); i++)
+			out.buffer.ptr[i] = 1/(1 + std::exp(-A.buffer.ptr[i]));
+
+		return out;
+	}
+
+	 tensor_list pullback_args(const tensor_list &ts, const Tensor &delta) const override {
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		for (size_t i = 0; i < A.shape->elements(); i++) {
+			float sigmoid = 1/(1 + std::exp(-A.buffer.ptr[i]));
+			out.buffer.ptr[i] = delta.buffer.ptr[i] * sigmoid * (1 - sigmoid);
+		}
+
+		return { out };
+	 }
+} static sigmoid;
+
+}
 
 // Machine learning utilities
 
@@ -548,7 +730,7 @@ struct Linear : Function {
 	bool bias;
 	Tensor W; // Combines weight and bias into a single matrix
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) const override {
+	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
 		if (auto X = A.reshape(-1, in)) {
 			Shape pad_shape = *X->shape;
@@ -577,38 +759,38 @@ struct Linear : Function {
 		return std::nullopt;
 	}
 
-	weakly_optional <Tensor> pushforward(const tensor_list &ts) const {
-		const Tensor &A = ts[0];
-		if (auto X = A.reshape(-1, in)) {
-			Shape pad_shape = *X->shape;
-			pad_shape[-1] = 1;
-
-			// TODO: only pad if there is a bias
-			Tensor padding = Tensor::zeros(pad_shape);
-			Tensor gemm_in = Tensor::concat(X, padding, 1);
-
-			Shape out_shape = *A.shape;
-			out_shape[-1] = out;
-
-			Tensor gemm_out = Tensor::blank(out_shape);
-
-			cpu_kernel_gemm
-			(
-				gemm_in.buffer, W.buffer, gemm_out.buffer,
-				gemm_in.shape.value()[0],
-				gemm_in.shape.value()[1],
-				W.shape.value()[1]
-			);
-
-			return gemm_out;
-		}
-
-		return std::nullopt;
-	}
+	// weakly_optional <Tensor> pushforward(const tensor_list &ts) const {
+	// 	const Tensor &A = ts[0];
+	// 	if (auto X = A.reshape(-1, in)) {
+	// 		Shape pad_shape = *X->shape;
+	// 		pad_shape[-1] = 1;
+	//
+	// 		// TODO: only pad if there is a bias
+	// 		Tensor padding = Tensor::zeros(pad_shape);
+	// 		Tensor gemm_in = Tensor::concat(X, padding, 1);
+	//
+	// 		Shape out_shape = *A.shape;
+	// 		out_shape[-1] = out;
+	//
+	// 		Tensor gemm_out = Tensor::blank(out_shape);
+	//
+	// 		cpu_kernel_gemm
+	// 		(
+	// 			gemm_in.buffer, W.buffer, gemm_out.buffer,
+	// 			gemm_in.shape.value()[0],
+	// 			gemm_in.shape.value()[1],
+	// 			W.shape.value()[1]
+	// 		);
+	//
+	// 		return gemm_out;
+	// 	}
+	//
+	// 	return std::nullopt;
+	// }
 
 	// TODO: also need original inputs always
 	// TODO: need a different structure for this...
-	tensor_list pullback(const Tensor &delta) const {
+	tensor_list pullback_args(const tensor_list &ts, const Tensor &delta) const override {
 		Tensor Wt = W.transpose();
 		if (auto X = delta.reshape(-1, out)) {
 			// TODO: different depending on the presence of the bias
@@ -625,7 +807,8 @@ struct Linear : Function {
 				Wt.shape.value()[1]
 			);
 
-			return { gemm_int.slice(0, int_shape[-1] - 1, int_shape.size() - 1) };
+			auto slice = gemm_int.slice(0, int_shape[-1] - 1, int_shape.size() - 1);
+			return { slice };
 		}
 
 		return {};
@@ -645,6 +828,7 @@ struct Linear : Function {
 
 // TODO: parameters() for computation graph returns a list of tensors with grad enabled only
 // TODO: Computation graph, that is evaluated lazily... use auto normally
+// .backward() only for these graphs
 struct Node {
 	const Function *const ftn;
 	// Function ftn;
@@ -676,12 +860,17 @@ Tensor operator+(float k, const Tensor &A)
 
 weakly_optional <Tensor> operator+(const Tensor &A, const Tensor &B)
 {
-	return add.forward(A, B);
+	return ops::add.forward(A, B);
 }
 
 weakly_optional <Tensor> operator-(const Tensor &A, const Tensor &B)
 {
-	return sub.forward(A, B);
+	return ops::sub.forward(A, B);
+}
+
+weakly_optional <Tensor> operator*(const Tensor &A, const Tensor &B)
+{
+	return ops::mul.forward(A, B);
 }
 
 int main()
@@ -692,13 +881,109 @@ int main()
 
 	fmt::print("Running optimization:\n");
 
-	Linear dense = *Linear::from(2, 4);
-	for (size_t i = 0; i < 100; i++) {
-		Tensor out = dense.forward(A);
-		fmt::print("\nA: {} -> out: {}\n", A, out);
-		Tensor delta = 2.0f * (out - B);
-		fmt::print("delta: {}\n", delta);
-		Tensor delta_A = dense.pullback(delta)[0];
-		A = A - 0.01f * delta_A;
+	Linear dense1 = *Linear::from(2, 5);
+	Linear dense2 = *Linear::from(5, 4);
+
+	// TODO: Two methods for easier composition: chains (creates a new function)
+	// and dynamic compute graphs (lazily evaluated, then backward on them())
+
+	struct Chain : Function {
+		// TODO: allow for non-linear chains
+		std::vector <tensor_list> node_args;
+		std::vector <Function *> nodes;
+
+		weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+			node_args = { ts };
+
+			Tensor out;
+			for (size_t i = 0; i < nodes.size(); i++) {
+				out = nodes[i]->forward_args(node_args.back());
+				node_args.push_back({ out });
+			}
+
+			return out;
+		}
+
+                // NOTE: We cannot have the usual pullback here since interim
+                // arguments are not given for the usual signature
+                tensor_list pullback(const Tensor &delta) const {
+			Tensor d = delta;
+			for (long int i = nodes.size() - 1; i >= 0; i--) {
+				// TODO: careful when doing multi input pullbacks that matter (such as sub)
+				d = nodes[i]->pullback_args(node_args[i], d)[0];
+			}
+
+			return { d };
+		}
+
+		// TODO: override the message for pullback_args
+
+		static Chain from(std::vector <Function *> &&nodes) {
+			Chain chain;
+			chain.nodes = std::move(nodes);
+			return chain;
+		}
+
+		// TODO: operator<< to chain easier
+	};
+
+	Chain dnn = Chain::from({
+		new Linear(*Linear::from(2, 5)),
+		new ops::_relu(ops::relu),
+		new Linear(*Linear::from(5, 4)),
+	});
+
+	for (size_t i = 0; i < 10; i++) {
+		// Tensor out = dense2.forward(ops::relu.forward(dense1.forward(A)));
+		Tensor out = dnn.forward(A);
+
+		// Tensor out = dense1.forward(A);
+		fmt::print("\nA: {}\n  > out: {}\n", A, out);
+		Tensor delta = 2 * (out - B);
+		fmt::print("  > delta: {}\n", delta);
+
+		{
+			// Tensor out = A;
+			// Tensor dense1_out = dense1.forward(A);
+			// Tensor relu_out = ops::sigmoid.forward(dense1_out);
+			// Tensor dens2_out = dense2.forward(relu_out);
+
+			Tensor dnn_out = out;
+			Tensor sub_out = dnn_out - B;
+			Tensor square_out = ops::square.forward(sub_out);
+			Tensor sum_out = ops::sum.forward(square_out);
+			fmt::print("\nloss: {}\n", sum_out);
+
+			Tensor delta_sum = Tensor::ones({});
+			fmt::print("  > delta loss: {}\n", delta_sum);
+
+			Tensor delta_square = ops::sum.pullback_args({ square_out }, delta_sum)[0];
+			fmt::print("  > delta square: {}\n", delta_square);
+
+			Tensor delta_sub = ops::square.pullback_args({ sub_out }, delta_square)[0];
+			fmt::print("  > delta sub: {}\n", delta_sub);
+
+			Tensor delta_dnn = ops::sub.pullback_args({ dnn_out, B }, delta_sub)[0];
+			fmt::print("  > delta dnn: {}\n", delta_dnn);
+
+			Tensor delta_out = dnn.pullback(delta_dnn)[0];
+			fmt::print("  > delta out: {}\n", delta_out);
+
+			// Tensor delta_dense2 = ops::sub.pullback_args({ dense2_out, B }, delta_sub)[0];
+			// fmt::print("  > delta dense2: {}\n", delta_dense2);
+			//
+			// Tensor delta_relu = dense2.pullback_args({ relu_out }, delta_dense2)[0];
+			// fmt::print("  > delta relu: {}\n", delta_relu);
+			//
+			// Tensor delta_dense1 = ops::relu.pullback_args({ dense1_out }, delta_relu)[0];
+			// fmt::print("  > delta dense1: {}\n", delta_dense1);
+			//
+			// Tensor delta_out = dense1.pullback_args({ out, B }, delta_dense1)[0];
+			// fmt::print("  > delta out: {}\n", delta_out);
+
+			A = A - 0.01f * delta_out;
+		}
 	}
+
+	// TODO: implement automatic gradient checking for all operators (test)
 }
