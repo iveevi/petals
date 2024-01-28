@@ -1,7 +1,8 @@
 #pragma once
 
-#include <optional>
 #include <cstring>
+#include <optional>
+#include <string>
 
 struct Resource {
 	// TODO: variant of all pointer types and vk buffer
@@ -97,23 +98,6 @@ struct Resource {
 	}
 };
 
-auto format_as(Resource::Type type)
-{
-	return "Float32";
-}
-
-auto format_as(Resource::Device device)
-{
-	switch (device) {
-	case Resource::eCPU:
-		return "CPU";
-	case Resource::eCUDA:
-		return "CUDA";
-	case Resource::eVulkan:
-		return "Vulkan";
-	default:
-		break;
-	}
-
-	return "?";
-}
+// Printing utilities
+std::string format_as(Resource::Type);
+std::string format_as(Resource::Device);

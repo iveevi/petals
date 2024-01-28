@@ -4,14 +4,23 @@ project(petals CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 
-include_directories(include)
+include(FetchContent)
 
-set(PETAL_SOURCES source/tensor.cpp)
+FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TAG master)
+FetchContent_MakeAvailable(fmt)
+
+set(PETAL_SOURCES
+	source/tensor.cpp
+	source/gradients.cpp
+	source/kernels.cpp
+	source/resource.cpp
+	source/composition.cpp)
 
 add_library(petal SHARED ${PETAL_SOURCES})
 
-add_executable(features-tests tests/features/main.cpp)
-add_executable(gradients-tests tests/gradients/main.cpp)
+include_directories(include)
+add_executable(features-tests tests/features/main.cpp ${PETAL_SOURCES})
+add_executable(gradients-tests tests/gradients/main.cpp ${PETAL_SOURCES})
 
-target_link_libraries(features-tests fmt petal)
-target_link_libraries(gradients-tests fmt petal)
+target_link_libraries(features-tests petal fmt::fmt)
+target_link_libraries(gradients-tests petal fmt::fmt)

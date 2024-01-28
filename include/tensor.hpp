@@ -4,6 +4,7 @@
 #include <random>
 #include <vector>
 
+#define FMT_HEADER_ONLY
 #include <fmt/format.h>
 
 #include "resource.hpp"
@@ -134,17 +135,6 @@ struct Shape : std::vector <long int> {
 		return true;
 	}
 };
-
-auto format_as(const Shape &s)
-{
-	std::string str = "(";
-	for (size_t i = 0; i < s.size(); i++) {
-		str += fmt::to_string(s[i]);
-		if (i + 1 < s.size())
-			str += ", ";
-	}
-	return str + ")";
-}
 
 struct Tensor {
 	Resource buffer;
@@ -414,43 +404,6 @@ struct Tensor {
 	}
 };
 
-// Tagger for Tensors
-decltype(Tensor::tagger) Tensor::tagger;
-
-static std::string string_data(const Tensor &t)
-{
-	if (!t.shape)
-		return "nil";
-
-	if (t.shape.value().size() == 0) {
-		// Single element
-		float v = t.buffer.ptr[0];
-		return fmt::format("{:.2f}", v);
-	}
-
-	std::string str = "[";
-	// TODO: some method for shape.value()[X]
-	for (size_t i = 0; i < t.shape.value()[0]; i++) {
-		str += string_data(*t[i]);
-		if (i + 1 < t.shape.value()[0])
-			str += ", ";
-	}
-
-	return str + "]";
-}
-
-auto format_as(const Tensor &t)
-{
-	std::string header = "<Tensor: " + fmt::format("{}; {}; {}", *t.shape, t.buffer.type, t.buffer.device) + "> = ";
-	return header + string_data(t);
-}
-
-// TODO: implementation file for Tensor
-
-// Operators
-Tensor operator*(float, const Tensor &);
-Tensor operator+(float, const Tensor &);
-
-weakly_optional <Tensor> operator+(const Tensor &, const Tensor &);
-weakly_optional <Tensor> operator-(const Tensor &, const Tensor &);
-weakly_optional <Tensor> operator*(const Tensor &, const Tensor &);
+// Printing tensors
+std::string format_as(const Shape &);
+std::string format_as(const Tensor &);
