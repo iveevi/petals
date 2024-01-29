@@ -19,8 +19,10 @@ set(PETAL_SOURCES
 add_library(petal SHARED ${PETAL_SOURCES})
 
 include_directories(include)
-add_executable(features-tests tests/features/main.cpp ${PETAL_SOURCES})
-add_executable(gradients-tests tests/gradients/main.cpp ${PETAL_SOURCES})
+add_executable(features-tests tests/features/main.cpp)
+add_executable(gradients-tests tests/gradients/main.cpp)
+add_executable(mnist tests/mnist/main.cpp)
 
 target_link_libraries(features-tests petal fmt::fmt)
 target_link_libraries(gradients-tests petal fmt::fmt)
+target_link_libraries(mnist petal fmt::fmt)

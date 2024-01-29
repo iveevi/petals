@@ -45,36 +45,3 @@ std::string format_as(const Tensor &t)
 	std::string header = "<Tensor: " + fmt::format("{}; {}; {}", *t.shape, t.buffer.type, t.buffer.device) + "> = ";
 	return header + string_data(t);
 }
-
-// Operator overloads
-DynamicDeferred operator*(float k, const Tensor &A)
-{
-	// TODO: memory management with functions
-	// conditional_ptr <dellocate?>
-	return DynamicDeferred::from(new ops::_scalek { ops::_scalek::from(k) }, { A });
-}
-
-DynamicDeferred operator+(float k, const Tensor &A)
-{
-	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(k) }, { A });
-}
-
-DynamicDeferred operator+(const Tensor &A, const Tensor &B)
-{
-	return DynamicDeferred::from(&ops::add, { A, B });
-}
-
-DynamicDeferred operator-(const Tensor &A, const Tensor &B)
-{
-	return DynamicDeferred::from(&ops::sub, { A, B });
-}
-
-DynamicDeferred operator*(const Tensor &A, const Tensor &B)
-{
-	return DynamicDeferred::from(&ops::mul, { A, B });
-}
-
-DynamicDeferred operator/(const Tensor &A, const Tensor &B)
-{
-	return DynamicDeferred::from(&ops::div, { A, B });
-}

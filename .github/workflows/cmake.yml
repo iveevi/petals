@@ -22,9 +22,6 @@ jobs:
       with:
         submodules: 'true'
 
-    - name: Install dependencies
-      run: sudo apt install libfmt-dev
-
     - name: Configure CMake
       run: cmake -B ${{github.workspace}}/build
 

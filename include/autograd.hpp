@@ -10,6 +10,9 @@
 using tensor_list = std::vector <Tensor>;
 
 struct Function {
+	std::string tag;
+
+	Function(const std::string &str) : tag(str) {}
 	virtual ~Function() {}
 
 	// Checking functions
