@@ -8,7 +8,7 @@ static std::string to_string(const DynamicDeferred &dd, size_t indents = 0)
 	std::string header = fmt::format("{} {{\n", dd.ftn->tag);
 	for (const auto &v : dd.args) {
 		if (std::holds_alternative <Tensor> (v))
-			header += fmt::format("{}  {}\n", indentation, std::get <Tensor> (v));
+			header += fmt::format("{}  Tensor of shape {}\n", indentation, *std::get <Tensor> (v).shape);
 		else
 			header += fmt::format("{}  {}\n", indentation, to_string(std::get <DynamicDeferred> (v), indents + 1));
 	}

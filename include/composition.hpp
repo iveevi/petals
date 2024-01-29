@@ -39,8 +39,12 @@ struct DynamicDeferred {
 	// TODO: blacklisting certain deltas through the tape (e.g. target delta which is never used)
 	tensor_list pullback(const Tensor &delta, Tape &tape) const {
 		// TODO: warn here
-		if (cached_args.empty())
+		if (cached_args.empty()) {
+			fmt::print("{} {} eval() must be performed in some manner before invoking pullback.\n",
+					fmt::format(fmt::fg(fmt::rgb(0xFF8888)), "[petals]"),
+					fmt::format(fmt::fg(fmt::rgb(0x8888FF)), "(dynamic deferred)"));
 			return {};
+		}
 
 		tensor_list current_deltas = ftn->pullback_args(cached_args, delta, tape);
 		tensor_list original_deltas;
@@ -173,10 +177,8 @@ struct Chain : Function {
 
 		// Do the pullback with cached inputs
 		Tensor d = delta;
-		for (long int i = nodes.size() - 1; i >= 0; i--) {
-			// TODO: careful when doing multi input pullbacks that matter (such as sub)
+		for (long int i = nodes.size() - 1; i >= 0; i--)
 			d = nodes[i]->pullback_args(node_args[i], d, tape)[0];
-		}
 
 		return { d };
 	}

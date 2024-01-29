@@ -1,3 +1,5 @@
+#include <limits>
+
 #include "autograd.hpp"
 #include "composition.hpp"
 #include "tensor.hpp"
@@ -125,7 +127,7 @@ struct _addk : Function {
 	}
 
 	static _addk from(float k) {
-		_addk s(fmt::format("add (k = {:.2f})", k));
+		_addk s(fmt::format("add <{:.4f}>", k));
 		s.k = k;
 		return s;
 	}
@@ -147,8 +149,21 @@ struct _scalek : Function {
 		return out;
 	}
 
+	tensor_list pullback_args(const tensor_list &ts, const Tensor &delta, Tape &tape) const override {
+		assert_nargs <1> (ts);
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		for (size_t i = 0; i < A.buffer.elements; i++)
+			out.buffer.ptr[i] = k * delta.buffer.ptr[i];
+
+		if (tape.contains(A.tag))
+			tape[A.tag] = out;
+
+		return { out };
+	}
+
 	static _scalek from(float k) {
-		_scalek s(fmt::format("add (k = {:.2f})", k));
+		_scalek s(fmt::format("scale <{:.4f}>", k));
 		s.k = k;
 		return s;
 	}
@@ -165,7 +180,6 @@ struct _square : Function {
 	}
 
 	tensor_list pullback_args(const tensor_list &ts, const Tensor &delta, Tape &tape) const override {
-		// TODO: multiply as well...
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		for (size_t i = 0; i < A.buffer.elements; i++)
@@ -206,6 +220,8 @@ struct _sum : Function {
 		return { out };
 	}
 } static sum("sum");
+
+// TODO: integer returning operations (e.g. argmax, argmin)
 
 // Classic activations
 struct _relu : Function {
@@ -263,6 +279,80 @@ struct _sigmoid : Function {
 		return { out };
 	}
 } static sigmoid("sigmoid");
+
+struct _softmax : Function {
+	using Function::Function;
+
+	size_t dim = 0;
+
+	// TODO: dimension
+	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		assert_nargs <1> (ts);
+		const Tensor &A = ts[0];
+
+		Tensor out = Tensor::blank_like(A);
+
+		size_t last_shape = A.shape.value()[-1];
+		size_t outer_shape = A.shape->elements() / last_shape;
+		for (size_t i = 0; i < outer_shape; i++) {
+			// TODO: cache this line
+			float max = -std::numeric_limits <float> ::max();
+			for (size_t j = 0; j < last_shape; j++) {
+				size_t index = i * last_shape + j;
+				max = std::max(max, A.buffer.ptr[index]);
+			}
+
+			float sum = 0;
+			for (size_t j = 0; j < last_shape; j++) {
+				size_t index = i * last_shape + j;
+				sum += std::exp(A.buffer.ptr[index] - max);
+			}
+
+			for (size_t j = 0; j < last_shape; j++) {
+				size_t index = i * last_shape + j;
+				out.buffer.ptr[index] = std::exp(A.buffer.ptr[index] - max) / sum;
+			}
+		}
+
+		return out;
+	}
+
+	// TODO: double check this...
+	tensor_list pullback_args(const tensor_list &ts, const Tensor &delta, Tape &tape) const override {
+		assert_nargs <1> (ts);
+		const Tensor &A = ts[0];
+
+		Tensor out = Tensor::blank_like(A);
+
+		size_t last_shape = A.shape.value()[-1];
+		size_t outer_shape = A.shape->elements() / last_shape;
+		for (size_t i = 0; i < outer_shape; i++) {
+			float max = -std::numeric_limits <float> ::max();
+			for (size_t j = 0; j < last_shape; j++) {
+				size_t index = i * last_shape + j;
+				max = std::max(max, A.buffer.ptr[index]);
+			}
+
+			float sum = 0;
+			for (size_t j = 0; j < last_shape; j++) {
+				size_t index = i * last_shape + j;
+				sum += std::exp(A.buffer.ptr[index] - max);
+			}
+
+			// TODO: multiply by the detla...
+			for (size_t j = 0; j < last_shape; j++) {
+				size_t index = i * last_shape + j;
+				float x = std::exp(A.buffer.ptr[index] - max);
+				out.buffer.ptr[i] = delta.buffer.ptr[i] * x * (sum - x)/(sum * sum);
+			}
+		}
+
+		if (tape.contains(A.tag))
+			tape[A.tag] = out;
+
+		return { out };
+	}
+} static softmax("softmax");
 
 }
 
@@ -352,14 +442,14 @@ struct Linear : Function {
 
 			Tensor dW = Tensor::blank({ in + 1, out });
 
-			// TODO: weakly_optional shape?
+			// TODO: weakly_optional shape
 			cpu_kernel_gemm
-				(
+			(
 				 XA.buffer, XD.buffer, dW.buffer,
 				 in + 1,
 				 XA.shape.value()[1],
 				 out
-				);
+			);
 
 			tape[W.tag] = dW;
 		}
@@ -379,6 +469,13 @@ struct Linear : Function {
 	}
 };
 
+// Soft requirements for lazy arguments
+template <typename T>
+concept autograd_friendly = std::is_same_v <Tensor, T>
+		|| std::is_same_v <weakly_optional <Tensor>, T>
+		|| std::is_same_v <DynamicDeferred, T>;
+
+
 // Exporting these functions as lazy evaluations
 template <typename ... Args>
 DynamicDeferred sum(const Args & ...args) {
@@ -392,11 +489,19 @@ DynamicDeferred square(const Args & ...args) {
 	return DynamicDeferred::from(&ops::square, ts);
 }
 
-// Operators
 template <typename T>
-concept autograd_friendly = std::is_same_v <Tensor, T>
-		|| std::is_same_v <weakly_optional <Tensor>, T>
-		|| std::is_same_v <DynamicDeferred, T>;
+requires autograd_friendly <T>
+DynamicDeferred softmax(const T &X) {
+	return DynamicDeferred::from(&ops::softmax, { X });
+}
+
+// Operators
+template <typename A>
+requires autograd_friendly <A>
+DynamicDeferred operator+(float k, const A &X)
+{
+	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(k) }, { X });
+}
 
 template <typename A>
 requires autograd_friendly <A>
@@ -409,9 +514,11 @@ DynamicDeferred operator*(float k, const A &X)
 
 template <typename A>
 requires autograd_friendly <A>
-DynamicDeferred operator+(float k, const A &X)
+DynamicDeferred operator/(const A &X, float k)
 {
-	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(k) }, { X });
+	// TODO: memory management with functions
+	// conditional_ptr <dellocate?>
+	return DynamicDeferred::from(new ops::_scalek { ops::_scalek::from(1.0f/k) }, { X });
 }
 
 // Binary operators

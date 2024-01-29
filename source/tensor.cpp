@@ -15,7 +15,7 @@ static std::string string_data(const Tensor &t)
 	if (t.shape.value().size() == 0) {
 		// Single element
 		float v = t.buffer.ptr[0];
-		return fmt::format("{:.2f}", v);
+		return fmt::format("{:.4f}", v);
 	}
 
 	std::string str = "[";

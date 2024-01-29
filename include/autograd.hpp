@@ -34,7 +34,7 @@ struct Function {
 
 	virtual tensor_list pullback_args(const tensor_list &, const Tensor &, Tape &) const {
 		// TODO: give each function a name
-		throw std::runtime_error("Function has not implemented pullback\n");
+		throw std::runtime_error(fmt::format("Function ({}) has not implemented pullback\n", tag));
 	}
 
 	// Wrapper function to accept variadic list of tensors

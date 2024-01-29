@@ -18,7 +18,7 @@ set(PETAL_SOURCES
 
 add_library(petal SHARED ${PETAL_SOURCES})
 
-include_directories(include)
+include_directories(include ${fmt_SOURCE_DIR}/include)
 add_executable(features-tests tests/features/main.cpp)
 add_executable(gradients-tests tests/gradients/main.cpp)
 add_executable(mnist tests/mnist/main.cpp)
