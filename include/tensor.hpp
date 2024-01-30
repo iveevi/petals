@@ -154,7 +154,7 @@ struct Tensor {
 	using index_type = Tensor;
 
 	// Assigning values
-	Tensor &operator=(float v) {
+	Tensor &operator=(double v) {
 		// TODO: type checking
 		buffer.memset(v);
 		return *this;
@@ -383,6 +383,22 @@ struct Tensor {
 	}
 
 	// TODO: stack (new dim) and cat (dim=-1)
+
+	// Random matrix initializations
+	// TODO: dissociate from tensors
+	static weakly_optional <Tensor> xavier(size_t in, size_t out, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+		Shape shape { in, out };
+		if (auto buffer = Resource::from(shape.elements(), type, device)) {
+			std::random_device rd;
+			std::mt19937 generator(rd());
+			std::normal_distribution <> distribution(0, std::sqrt(1.0/(in + out)));
+			// TODO: defer then
+			for (size_t i = 0; i < shape.elements(); i++)
+				buffer->ptr[i] = distribution(generator);
+			return Tensor { *buffer, shape, tagger() };
+		}
+		return std::nullopt;
+	}
 
 	// Random tensor
 	static weakly_optional <Tensor> randn(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {

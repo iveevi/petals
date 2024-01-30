@@ -114,7 +114,7 @@ struct _div : Function {
 struct _addk : Function {
 	using Function::Function;
 
-	float k;
+	double k;
 	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
 		assert_nargs <1> (ts);
 		const Tensor &A = ts[0];
@@ -126,7 +126,7 @@ struct _addk : Function {
 		return out;
 	}
 
-	static _addk from(float k) {
+	static _addk from(double k) {
 		_addk s(fmt::format("add <{:.4f}>", k));
 		s.k = k;
 		return s;
@@ -136,7 +136,7 @@ struct _addk : Function {
 struct _scalek : Function {
 	using Function::Function;
 
-	float k;
+	double k;
 
 	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
 		assert_nargs <1> (ts);
@@ -162,7 +162,7 @@ struct _scalek : Function {
 		return { out };
 	}
 
-	static _scalek from(float k) {
+	static _scalek from(double k) {
 		_scalek s(fmt::format("scale <{:.4f}>", k));
 		s.k = k;
 		return s;
@@ -192,6 +192,22 @@ struct _square : Function {
 	}
 } static square("square");
 
+struct _sqrt : Function {
+	using Function::Function;
+
+	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+		const Tensor &A = ts[0];
+		Tensor out = Tensor::blank_like(A);
+		// TODO: element wise unary kernel
+		for (size_t i = 0; i < A.shape->elements(); i++) {
+			double x = A.buffer.ptr[i];
+			out.buffer.ptr[i] = std::sqrt(x);
+		}
+
+		return out;
+	}
+} static sqrt("sqrt");
+
 struct _sum : Function {
 	using Function::Function;
 
@@ -201,7 +217,7 @@ struct _sum : Function {
 	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank({});
-		float sum = 0.0f;
+		double sum = 0.0f;
 		for (size_t i = 0; i < A.shape->elements(); i++)
 			sum += A.buffer.ptr[i];
 		out.buffer.ptr[0] = sum;
@@ -231,7 +247,7 @@ struct _relu : Function {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		for (size_t i = 0; i < A.shape->elements(); i++) {
-			float x = A.buffer.ptr[i];
+			double x = A.buffer.ptr[i];
 			out.buffer.ptr[i] = std::fmax(0, x);
 		}
 
@@ -242,7 +258,7 @@ struct _relu : Function {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		for (size_t i = 0; i < A.shape->elements(); i++) {
-			float x = A.buffer.ptr[i];
+			double x = A.buffer.ptr[i];
 			out.buffer.ptr[i] = delta.buffer.ptr[i] * ((x > 0) ? 1 : 0);
 		}
 
@@ -269,9 +285,12 @@ struct _sigmoid : Function {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		for (size_t i = 0; i < A.shape->elements(); i++) {
-			float sigmoid = 1/(1 + std::exp(-A.buffer.ptr[i]));
+			double sigmoid = 1/(1 + std::exp(-A.buffer.ptr[i]));
 			out.buffer.ptr[i] = delta.buffer.ptr[i] * sigmoid * (1 - sigmoid);
 		}
+
+		// fmt::print("delta out into softmax: {}\n", delta[0]);
+		// fmt::print("delta in from softmax: {}\n", out[0]);
 
 		if (tape.contains(A.tag))
 			tape[A.tag] = out;
@@ -281,6 +300,7 @@ struct _sigmoid : Function {
 } static sigmoid("sigmoid");
 
 struct _softmax : Function {
+	// TODO: mode for fused cross entropy or simplified derivative..
 	using Function::Function;
 
 	size_t dim = 0;
@@ -292,17 +312,19 @@ struct _softmax : Function {
 
 		Tensor out = Tensor::blank_like(A);
 
+		// fmt::print("input to softmax: {}\n", A[0]);
+
 		size_t last_shape = A.shape.value()[-1];
 		size_t outer_shape = A.shape->elements() / last_shape;
 		for (size_t i = 0; i < outer_shape; i++) {
 			// TODO: cache this line
-			float max = -std::numeric_limits <float> ::max();
+			double max = -std::numeric_limits <double> ::max();
 			for (size_t j = 0; j < last_shape; j++) {
 				size_t index = i * last_shape + j;
 				max = std::max(max, A.buffer.ptr[index]);
 			}
 
-			float sum = 0;
+			double sum = 0;
 			for (size_t j = 0; j < last_shape; j++) {
 				size_t index = i * last_shape + j;
 				sum += std::exp(A.buffer.ptr[index] - max);
@@ -314,6 +336,8 @@ struct _softmax : Function {
 			}
 		}
 
+		// fmt::print("softmax output: {}\n", out);
+
 		return out;
 	}
 
@@ -323,17 +347,19 @@ struct _softmax : Function {
 		const Tensor &A = ts[0];
 
 		Tensor out = Tensor::blank_like(A);
+		// fmt::print("input to softmax: {}\n", A[0]);
+		// fmt::print("  > delta to softmax: {}\n", delta);
 
 		size_t last_shape = A.shape.value()[-1];
 		size_t outer_shape = A.shape->elements() / last_shape;
 		for (size_t i = 0; i < outer_shape; i++) {
-			float max = -std::numeric_limits <float> ::max();
+			double max = -std::numeric_limits <double> ::max();
 			for (size_t j = 0; j < last_shape; j++) {
 				size_t index = i * last_shape + j;
 				max = std::max(max, A.buffer.ptr[index]);
 			}
 
-			float sum = 0;
+			double sum = 0;
 			for (size_t j = 0; j < last_shape; j++) {
 				size_t index = i * last_shape + j;
 				sum += std::exp(A.buffer.ptr[index] - max);
@@ -342,10 +368,27 @@ struct _softmax : Function {
 			// TODO: multiply by the detla...
 			for (size_t j = 0; j < last_shape; j++) {
 				size_t index = i * last_shape + j;
-				float x = std::exp(A.buffer.ptr[index] - max);
-				out.buffer.ptr[i] = delta.buffer.ptr[i] * x * (sum - x)/(sum * sum);
+				double x = std::exp(A.buffer.ptr[index] - max);
+				out.buffer.ptr[index] = delta.buffer.ptr[index] * x * (sum - x)/(sum * sum);
+
+				// double s = x/sum;
+				// out.buffer.ptr[index] = 0.0f;
+				// for (size_t k = 0; k < last_shape; k++) {
+				// 	size_t sub_index = i * last_shape + k;
+				// 	float de = s * (1 - s);
+				// 	if (k != j) {
+				// 		float os = std::exp(A.buffer.ptr[sub_index] - max)/sum;
+				// 		de = - s * os;
+				// 	}
+				//
+				// 	out.buffer.ptr[index] += de;
+				// }
+				//
+				// out.buffer.ptr[index] *= delta.buffer.ptr[index];
 			}
 		}
+
+		// fmt::print("delta in from softmax: {}\n", out);
 
 		if (tape.contains(A.tag))
 			tape[A.tag] = out;
@@ -373,6 +416,7 @@ struct Linear : Function {
 
 	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
+		// fmt::print("input to linear: {}\n", A);
 		if (auto X = A.reshape(-1, in)) {
 			Shape pad_shape = *X->shape;
 			pad_shape[-1] = 1;
@@ -387,12 +431,12 @@ struct Linear : Function {
 			Tensor gemm_out = Tensor::blank(out_shape);
 
 			cpu_kernel_gemm
-				(
+			(
 				 gemm_in.buffer, W.buffer, gemm_out.buffer,
 				 gemm_in.shape.value()[0],
 				 gemm_in.shape.value()[1],
 				 W.shape.value()[1]
-				);
+			);
 
 			return gemm_out;
 		}
@@ -415,16 +459,17 @@ struct Linear : Function {
 		Tensor gemm_int = Tensor::blank(int_shape);
 
 		cpu_kernel_gemm
-			(
-			 X.buffer, W.buffer, gemm_int.buffer,
+		(
+			 X.buffer, Wt.buffer, gemm_int.buffer,
 			 X.shape.value()[0],
 			 X.shape.value()[1],
 			 Wt.shape.value()[1]
-			);
+		);
 
 		auto slice = gemm_int.slice(0, int_shape[-1] - 1, int_shape.size() - 1);
+		// fmt::print("delta out into linear: {}\n", delta[0]);
+		// fmt::print("delta in from linear: {}\n", slice[0]);
 
-		// TODO: also check for W
 		if (tape.contains(A.tag))
 			tape[A.tag] = slice;
 
@@ -446,9 +491,7 @@ struct Linear : Function {
 			cpu_kernel_gemm
 			(
 				 XA.buffer, XD.buffer, dW.buffer,
-				 in + 1,
-				 XA.shape.value()[1],
-				 out
+				 in + 1, XA.shape.value()[1], out
 			);
 
 			tape[W.tag] = dW;
@@ -464,7 +507,8 @@ struct Linear : Function {
 		dense.in = in;
 		dense.out = out;
 		dense.bias = bias;
-		dense.W = *Tensor::randn({ in + bias, out });
+		// dense.W = Tensor::randn({ in + bias, out });
+		dense.W = Tensor::xavier(in + bias, out);
 		return dense;
 	}
 };
@@ -489,6 +533,25 @@ DynamicDeferred square(const Args & ...args) {
 	return DynamicDeferred::from(&ops::square, ts);
 }
 
+template <typename ... Args>
+DynamicDeferred sqrt(const Args & ...args) {
+	std::initializer_list <std::variant <Tensor, DynamicDeferred>> ts { args... };
+	return DynamicDeferred::from(&ops::sqrt, ts);
+}
+
+// Activations
+template <typename T>
+requires autograd_friendly <T>
+DynamicDeferred relu(const T &X) {
+	return DynamicDeferred::from(&ops::relu, { X });
+}
+
+template <typename T>
+requires autograd_friendly <T>
+DynamicDeferred sigmoid(const T &X) {
+	return DynamicDeferred::from(&ops::sigmoid, { X });
+}
+
 template <typename T>
 requires autograd_friendly <T>
 DynamicDeferred softmax(const T &X) {
@@ -498,14 +561,35 @@ DynamicDeferred softmax(const T &X) {
 // Operators
 template <typename A>
 requires autograd_friendly <A>
-DynamicDeferred operator+(float k, const A &X)
+DynamicDeferred operator+(double k, const A &X)
 {
 	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(k) }, { X });
 }
 
 template <typename A>
 requires autograd_friendly <A>
-DynamicDeferred operator*(float k, const A &X)
+DynamicDeferred operator+(const A &X, double k)
+{
+	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(k) }, { X });
+}
+
+template <typename A>
+requires autograd_friendly <A>
+DynamicDeferred operator-(double k, const A &X)
+{
+	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(-k) }, { X });
+}
+
+template <typename A>
+requires autograd_friendly <A>
+DynamicDeferred operator-(const A &X, double k)
+{
+	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(-k) }, { X });
+}
+
+template <typename A>
+requires autograd_friendly <A>
+DynamicDeferred operator*(double k, const A &X)
 {
 	// TODO: memory management with functions
 	// conditional_ptr <dellocate?>
@@ -514,10 +598,8 @@ DynamicDeferred operator*(float k, const A &X)
 
 template <typename A>
 requires autograd_friendly <A>
-DynamicDeferred operator/(const A &X, float k)
+DynamicDeferred operator/(const A &X, double k)
 {
-	// TODO: memory management with functions
-	// conditional_ptr <dellocate?>
 	return DynamicDeferred::from(new ops::_scalek { ops::_scalek::from(1.0f/k) }, { X });
 }
 
@@ -534,4 +616,18 @@ requires autograd_friendly <A> && autograd_friendly <B>
 DynamicDeferred operator-(const A &Xa, const B &Xb)
 {
 	return DynamicDeferred::from(&ops::sub, { Xa, Xb });
+}
+
+template <typename A, typename B>
+requires autograd_friendly <A> && autograd_friendly <B>
+DynamicDeferred operator*(const A &Xa, const B &Xb)
+{
+	return DynamicDeferred::from(&ops::mul, { Xa, Xb });
+}
+
+template <typename A, typename B>
+requires autograd_friendly <A> && autograd_friendly <B>
+DynamicDeferred operator/(const A &Xa, const B &Xb)
+{
+	return DynamicDeferred::from(&ops::div, { Xa, Xb });
 }

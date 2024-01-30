@@ -10,10 +10,10 @@ void cpu_kernel_gemm(const Resource &A, const Resource &B, Resource &C, size_t N
 	// TODO: optimize
 	for (size_t i = 0; i < N; i++) {
 		for (size_t j = 0; j < K; j++) {
-			float sum = 0.0f;
+			double sum = 0.0f;
 			for (size_t k = 0; k < M; k++) {
-				float a = A.ptr[i * M + k];
-				float b = B.ptr[k * K + j];
+				double a = A.ptr[i * M + k];
+				double b = B.ptr[k * K + j];
 				sum += a * b;
 			}
 

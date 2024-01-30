@@ -27,8 +27,9 @@ int main()
 
 	Chain dnn = Linear::from(2, 5) >> ops::relu >> Linear::from(5, 4);
 
-	// SGD opt = SGD::from(dnn.parameters());
-	auto opt = Momentum::from(dnn.parameters());
+	SGD opt = SGD::from(dnn.parameters());
+	// auto opt = Momentum::from(dnn.parameters());
+	// auto opt = Adam::from(dnn.parameters());
 
 	for (size_t i = 0; i < 10; i++) {
 		Tensor out = dnn.forward(A);

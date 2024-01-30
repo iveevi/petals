@@ -27,3 +27,6 @@ jobs:
 
     - name: Build
       run: cmake --build ${{github.workspace}}/build
+
+    - name: Gradients
+      run: ${{github.workspace}}/build/gradients-test

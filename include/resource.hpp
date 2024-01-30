@@ -6,7 +6,7 @@
 
 struct Resource {
 	// TODO: variant of all pointer types and vk buffer
-	float *ptr = nullptr;
+	double *ptr = nullptr;
 	bool owner = false;
 	size_t elements = 0;
 
@@ -21,7 +21,7 @@ struct Resource {
 	} device;
 
 	// Memset each element
-	void memset(float value) const {
+	void memset(double value) const {
 		for (size_t i = 0; i < elements; i++)
 			ptr[i] = value;
 	}
@@ -49,7 +49,7 @@ struct Resource {
 
 		// TODO: check that the device/API is the same
 		if (ptr != r.ptr)
-			std::memcpy(ptr, r.ptr, elements * sizeof(float));
+			std::memcpy(ptr, r.ptr, elements * sizeof(double));
 
 		return true;
 	}
@@ -57,17 +57,17 @@ struct Resource {
 	// Cloning resources
 	std::optional <Resource> clone() const {
 		// TODO: infer allocator
-		float *new_ptr = nullptr;
+		double *new_ptr = nullptr;
 		switch (device) {
 		case eCPU:
-			new_ptr = new float[elements];
+			new_ptr = new double[elements];
 		default:
 			break;
 		}
 
 		if (ptr) {
 			// TODO: depending on the device
-			std::memcpy(new_ptr, ptr, elements * sizeof(float));
+			std::memcpy(new_ptr, ptr, elements * sizeof(double));
 			return Resource { new_ptr, true, elements, type, device };
 		}
 
@@ -78,10 +78,10 @@ struct Resource {
 
 	static std::optional <Resource> from(size_t elements, Resource::Type type, Resource::Device device) {
 		// TODO: custom allocator to track memory and hold pages for a particular device
-		float *ptr = nullptr;
+		double *ptr = nullptr;
 		switch (device) {
 		case eCPU:
-			ptr = new float[elements];
+			ptr = new double[elements];
 		default:
 			break;
 		}
