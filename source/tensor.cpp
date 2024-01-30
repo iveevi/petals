@@ -7,22 +7,25 @@
 decltype(Tensor::tagger) Tensor::tagger;
 
 // Formatting tensors
-static std::string string_data(const Tensor &t)
+static std::string string_data(const double *const ptr, const std::optional <Shape> &opt_shape)
 {
-	if (!t.shape)
+	if (!opt_shape)
 		return "nil";
 
-	if (t.shape.value().size() == 0) {
+	Shape shape = opt_shape.value();
+	if (shape.size() == 0) {
 		// Single element
-		double v = t.buffer.ptr[0];
+		double v = ptr[0];
 		return fmt::format("{:.4f}", v);
 	}
 
+	Shape sub_shape = shape.pop();
+	size_t sub_size = sub_shape.size();
+
 	std::string str = "[";
-	// TODO: some method for shape.value()[X]
-	for (size_t i = 0; i < t.shape.value()[0]; i++) {
-		str += string_data(*t[i]);
-		if (i + 1 < t.shape.value()[0])
+	for (size_t i = 0; i < shape[0]; i++) {
+		str += string_data(ptr + i * sub_size, sub_shape);
+		if (i + 1 < shape[0])
 			str += ", ";
 	}
 
@@ -43,5 +46,5 @@ std::string format_as(const Shape &s)
 std::string format_as(const Tensor &t)
 {
 	std::string header = "<Tensor: " + fmt::format("{}; {}; {}", *t.shape, t.buffer.type, t.buffer.device) + "> = ";
-	return header + string_data(t);
+	return header + string_data(t.buffer.ptr, t.shape);
 }

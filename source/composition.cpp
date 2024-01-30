@@ -25,6 +25,6 @@ std::string format_as(const DynamicDeferred &dd)
 // Converting proxy chains
 ChainProxy::operator Chain()
 {
-	std::vector <Function *> transfered(begin(), end());
+	std::vector <std::shared_ptr <Function>> transfered(begin(), end());
 	return Chain::from(transfered);
 }

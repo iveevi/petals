@@ -30,7 +30,7 @@ struct Function {
 	}
 
 	// Always need a way to get the primal value
-	virtual weakly_optional <Tensor> forward_args(const tensor_list &) = 0;
+	virtual Tensor forward_args(const tensor_list &) = 0;
 
 	virtual tensor_list pullback_args(const tensor_list &, const Tensor &, Tape &) const {
 		// TODO: give each function a name
@@ -39,7 +39,7 @@ struct Function {
 
 	// Wrapper function to accept variadic list of tensors
 	template <typename ... Args>
-	weakly_optional <Tensor> forward(const Args & ...args) {
+	Tensor forward(const Args & ...args) {
 		std::initializer_list <Tensor> ts { args... };
 		return forward_args(ts);
 	}

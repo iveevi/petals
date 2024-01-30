@@ -19,19 +19,19 @@ int main()
 {
 	// TODO: fixing the random seed
 	Tensor A = Tensor::randn({ 2, 2 });
-	// Tensor B = Tensor::randn({ 2, 4 });
-	Tensor B = Tensor::ones({ 2, 4 });
+	Tensor B = Tensor::randn({ 2, 4 });
 	fmt::print("A: {}\nB: {}\n", A, B);
 
 	fmt::print("Running optimization:\n");
 
-	Chain dnn = Linear::from(2, 5) >> ops::relu >> Linear::from(5, 4);
+	// Chain dnn = Linear::from(2, 5) >> ops::relu >> Linear::from(5, 4);
+	Chain dnn = Chain::from(Linear::from(2, 5), ops::relu, Linear::from(5, 4));
 
-	SGD opt = SGD::from(dnn.parameters());
+	auto opt = SGD::from(dnn.parameters());
 	// auto opt = Momentum::from(dnn.parameters());
 	// auto opt = Adam::from(dnn.parameters());
 
-	for (size_t i = 0; i < 10; i++) {
+	for (size_t i = 0; i < 1; i++) {
 		Tensor out = dnn.forward(A);
 
 		fmt::print("\nA: {}\n  > out: {}\n", A, out);
@@ -39,15 +39,15 @@ int main()
 		// TODO: how to restrict gradients for only scalar outputs?
 		Tape tape = Tape::from(dnn.parameters());
 
-		auto loss = sum(square(dnn(A) - B));
+		// auto loss = sum(square(dnn(A) - B));
+		auto loss = sum(dnn(A));
+		loss.eval();
+
 		// fmt::print("  > loss graph:\n{}\n", loss);
-		fmt::print("  > loss: {}\n", loss.eval());
+		// fmt::print("  > loss: {}\n", loss.eval());
 		loss.backward(tape);
-		// loss.pullback(Tensor::ones({}), tape);
 
 		// TODO: warn if empty tensors
 		opt.step(tape);
 	}
-
-	// TODO: implement automatic gradient checking for all operators (test)
 }

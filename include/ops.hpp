@@ -10,14 +10,14 @@ namespace ops {
 struct _add : Function {
 	using Function::Function;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		assert_nargs <2> (ts);
 		const Tensor &A = ts[0];
 		const Tensor &B = ts[1];
 
 		// TODO: issue warning to logger
 		if (A.shape != B.shape)
-			return std::nullopt;
+			return {};
 
 		Tensor out = Tensor::blank_like(A);
 		cpu_kernel_ewop <kadd> (A.buffer, B.buffer, out.buffer);
@@ -28,7 +28,7 @@ struct _add : Function {
 struct _sub : Function {
 	using Function::Function;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		assert_nargs <2> (ts);
 		const Tensor &A = ts[0];
 		const Tensor &B = ts[1];
@@ -39,7 +39,7 @@ struct _sub : Function {
 					fmt::format(fmt::fg(fmt::rgb(0xFF8888)), "[petals]"),
 					fmt::format(fmt::fg(fmt::rgb(0x8888FF)), "(_sub)"),
 					*A.shape, *B.shape);
-			return std::nullopt;
+			return {};
 		}
 
 		Tensor out = Tensor::blank_like(A);
@@ -78,14 +78,14 @@ struct _sub : Function {
 struct _mul : Function {
 	using Function::Function;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		assert_nargs <2> (ts);
 		const Tensor &A = ts[0];
 		const Tensor &B = ts[1];
 
 		// TODO: issue warning to logger
 		if (A.shape != B.shape)
-			return std::nullopt;
+			return {};
 
 		Tensor out = Tensor::blank_like(A);
 		cpu_kernel_ewop <kmul> (A.buffer, B.buffer, out.buffer);
@@ -96,14 +96,14 @@ struct _mul : Function {
 struct _div : Function {
 	using Function::Function;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		assert_nargs <2> (ts);
 		const Tensor &A = ts[0];
 		const Tensor &B = ts[1];
 
 		// TODO: issue warning to logger
 		if (A.shape != B.shape)
-			return std::nullopt;
+			return {};
 
 		Tensor out = Tensor::blank_like(A);
 		cpu_kernel_ewop <kdiv> (A.buffer, B.buffer, out.buffer);
@@ -115,7 +115,7 @@ struct _addk : Function {
 	using Function::Function;
 
 	double k;
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		assert_nargs <1> (ts);
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
@@ -138,7 +138,7 @@ struct _scalek : Function {
 
 	double k;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		assert_nargs <1> (ts);
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
@@ -172,7 +172,7 @@ struct _scalek : Function {
 struct _square : Function {
 	using Function::Function;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		cpu_kernel_ewop <kmul> (A.buffer, A.buffer, out.buffer);
@@ -195,7 +195,7 @@ struct _square : Function {
 struct _sqrt : Function {
 	using Function::Function;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		// TODO: element wise unary kernel
@@ -214,7 +214,7 @@ struct _sum : Function {
 	size_t dim = 0;
 
 	// TODO: dimension
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank({});
 		double sum = 0.0f;
@@ -243,7 +243,7 @@ struct _sum : Function {
 struct _relu : Function {
 	using Function::Function;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		for (size_t i = 0; i < A.shape->elements(); i++) {
@@ -272,7 +272,7 @@ struct _relu : Function {
 struct _sigmoid : Function {
 	using Function::Function;
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		for (size_t i = 0; i < A.shape->elements(); i++)
@@ -306,7 +306,7 @@ struct _softmax : Function {
 	size_t dim = 0;
 
 	// TODO: dimension
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		assert_nargs <1> (ts);
 		const Tensor &A = ts[0];
 
@@ -414,34 +414,30 @@ struct Linear : Function {
 		return { &W };
 	}
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		const Tensor &A = ts[0];
 		// fmt::print("input to linear: {}\n", A);
-		if (auto X = A.reshape(-1, in)) {
-			Shape pad_shape = *X->shape;
-			pad_shape[-1] = 1;
+		Tensor X = A.reshape(-1, in);
+		Shape pad_shape = *X.shape;
+		pad_shape[-1] = 1;
 
-			Tensor padding = Tensor::ones(pad_shape);
-			Tensor gemm_in = Tensor::concat(X, padding, 1);
+		Tensor padding = Tensor::ones(pad_shape);
+		Tensor gemm_in = Tensor::concat(X, padding, 1);
 
-			Shape out_shape = *A.shape;
-			out_shape[-1] = out;
+		Shape out_shape = *A.shape;
+		out_shape[-1] = out;
 
-			// TODO: differentiate between zeros (memset) and blank (shape only, no memset)
-			Tensor gemm_out = Tensor::blank(out_shape);
+		Tensor gemm_out = Tensor::blank(out_shape);
 
-			cpu_kernel_gemm
-			(
-				 gemm_in.buffer, W.buffer, gemm_out.buffer,
-				 gemm_in.shape.value()[0],
-				 gemm_in.shape.value()[1],
-				 W.shape.value()[1]
-			);
+		cpu_kernel_gemm
+		(
+			 gemm_in.buffer, W.buffer, gemm_out.buffer,
+			 gemm_in.shape.value()[0],
+			 gemm_in.shape.value()[1],
+			 W.shape.value()[1]
+		);
 
-			return gemm_out;
-		}
-
-		return std::nullopt;
+		return gemm_out;
 	}
 
 	// TODO: also need original inputs always
@@ -524,38 +520,38 @@ concept autograd_friendly = std::is_same_v <Tensor, T>
 template <typename ... Args>
 DynamicDeferred sum(const Args & ...args) {
 	std::initializer_list <std::variant <Tensor, DynamicDeferred>> ts { args... };
-	return DynamicDeferred::from(&ops::sum, ts);
+	return DynamicDeferred::from(nop_ptr(&ops::sum), ts);
 }
 
 template <typename ... Args>
 DynamicDeferred square(const Args & ...args) {
 	std::initializer_list <std::variant <Tensor, DynamicDeferred>> ts { args... };
-	return DynamicDeferred::from(&ops::square, ts);
+	return DynamicDeferred::from(nop_ptr(&ops::square), ts);
 }
 
 template <typename ... Args>
 DynamicDeferred sqrt(const Args & ...args) {
 	std::initializer_list <std::variant <Tensor, DynamicDeferred>> ts { args... };
-	return DynamicDeferred::from(&ops::sqrt, ts);
+	return DynamicDeferred::from(nop_ptr(&ops::sqrt), ts);
 }
 
 // Activations
 template <typename T>
 requires autograd_friendly <T>
 DynamicDeferred relu(const T &X) {
-	return DynamicDeferred::from(&ops::relu, { X });
+	return DynamicDeferred::from(nop_ptr(&ops::relu), { X });
 }
 
 template <typename T>
 requires autograd_friendly <T>
 DynamicDeferred sigmoid(const T &X) {
-	return DynamicDeferred::from(&ops::sigmoid, { X });
+	return DynamicDeferred::from(nop_ptr(&ops::sigmoid), { X });
 }
 
 template <typename T>
 requires autograd_friendly <T>
 DynamicDeferred softmax(const T &X) {
-	return DynamicDeferred::from(&ops::softmax, { X });
+	return DynamicDeferred::from(nop_ptr(&ops::softmax), { X });
 }
 
 // Operators
@@ -563,44 +559,42 @@ template <typename A>
 requires autograd_friendly <A>
 DynamicDeferred operator+(double k, const A &X)
 {
-	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(k) }, { X });
+	return DynamicDeferred::from(value_ptr(ops::_addk::from(k)), { X });
 }
 
 template <typename A>
 requires autograd_friendly <A>
 DynamicDeferred operator+(const A &X, double k)
 {
-	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(k) }, { X });
+	return DynamicDeferred::from(value_ptr(ops::_addk::from(k)), { X });
 }
 
 template <typename A>
 requires autograd_friendly <A>
 DynamicDeferred operator-(double k, const A &X)
 {
-	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(-k) }, { X });
+	return DynamicDeferred::from(value_ptr(ops::_addk::from(-k)), { X });
 }
 
 template <typename A>
 requires autograd_friendly <A>
 DynamicDeferred operator-(const A &X, double k)
 {
-	return DynamicDeferred::from(new ops::_addk { ops::_addk::from(-k) }, { X });
+	return DynamicDeferred::from(value_ptr(ops::_addk::from(-k)), { X });
 }
 
 template <typename A>
 requires autograd_friendly <A>
 DynamicDeferred operator*(double k, const A &X)
 {
-	// TODO: memory management with functions
-	// conditional_ptr <dellocate?>
-	return DynamicDeferred::from(new ops::_scalek { ops::_scalek::from(k) }, { X });
+	return DynamicDeferred::from(value_ptr(ops::_scalek::from(k)), { X });
 }
 
 template <typename A>
 requires autograd_friendly <A>
 DynamicDeferred operator/(const A &X, double k)
 {
-	return DynamicDeferred::from(new ops::_scalek { ops::_scalek::from(1.0f/k) }, { X });
+	return DynamicDeferred::from(value_ptr(ops::_scalek::from(1.0f/k)), { X });
 }
 
 // Binary operators
@@ -608,26 +602,26 @@ template <typename A, typename B>
 requires autograd_friendly <A> && autograd_friendly <B>
 DynamicDeferred operator+(const A &Xa, const B &Xb)
 {
-	return DynamicDeferred::from(&ops::add, { Xa, Xb });
+	return DynamicDeferred::from(nop_ptr(&ops::add), { Xa, Xb });
 }
 
 template <typename A, typename B>
 requires autograd_friendly <A> && autograd_friendly <B>
 DynamicDeferred operator-(const A &Xa, const B &Xb)
 {
-	return DynamicDeferred::from(&ops::sub, { Xa, Xb });
+	return DynamicDeferred::from(nop_ptr(&ops::sub), { Xa, Xb });
 }
 
 template <typename A, typename B>
 requires autograd_friendly <A> && autograd_friendly <B>
 DynamicDeferred operator*(const A &Xa, const B &Xb)
 {
-	return DynamicDeferred::from(&ops::mul, { Xa, Xb });
+	return DynamicDeferred::from(nop_ptr(&ops::mul), { Xa, Xb });
 }
 
 template <typename A, typename B>
 requires autograd_friendly <A> && autograd_friendly <B>
 DynamicDeferred operator/(const A &Xa, const B &Xb)
 {
-	return DynamicDeferred::from(&ops::div, { Xa, Xb });
+	return DynamicDeferred::from(nop_ptr(&ops::div), { Xa, Xb });
 }

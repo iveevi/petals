@@ -16,16 +16,16 @@ template <typename T>
 struct weakly_optional : std::optional <T> {
 	using std::optional <T> ::optional;
 
-	operator T() const {
-		if (!this->has_value()) {
-			// TODO: custom logging
-			fmt::print("Implicitly converting weakly_optional tensor of null value\n");
-			// std::terminate();
-			std::exit(EXIT_FAILURE);
-		}
-
-		return this->value();
-	}
+	// operator T() const {
+	// 	if (!this->has_value()) {
+	// 		// TODO: custom logging
+	// 		fmt::print("Implicitly converting weakly_optional tensor of null value\n");
+	// 		// std::terminate();
+	// 		std::exit(EXIT_FAILURE);
+	// 	}
+	//
+	// 	return this->value();
+	// }
 
 	// TODO: only if it has an indexing
 	T::index_type operator[](int i) {
@@ -153,6 +153,14 @@ struct Tensor {
 	// Type definitions for templates
 	using index_type = Tensor;
 
+	// Tracking the memory; debug only
+	[[gnu::always_inline]]
+	Tensor &track() {
+		fmt::print("TRACKING ON FOR @{}\n", (void *) buffer.ptr);
+		buffer.tracking = true;
+		return *this;
+	}
+
 	// Assigning values
 	Tensor &operator=(double v) {
 		// TODO: type checking
@@ -162,9 +170,10 @@ struct Tensor {
 
 	// Indexing the topmost dimension
 	// TODO: negative dimensions as well...
-	weakly_optional <Tensor> operator[](size_t i) const {
+	Tensor operator[](size_t i) const {
+		// TODO: error
 		if (!shape || i >= (*shape)[0])
-			return std::nullopt;
+			return {};
 
 		Shape sub_shape = shape->pop();
 		size_t start = i * sub_shape.elements();
@@ -174,25 +183,29 @@ struct Tensor {
 	}
 
 	// Reshaping tensors
-	weakly_optional <Tensor> reshape(const Shape &other) const {
+	Tensor reshape(const Shape &other) const {
 		if (auto reshaped = shape->reshape(other)) {
 			Resource reshaped_buffer = *buffer.slice(); // Gets the whole thing for free
 			return Tensor { reshaped_buffer, *reshaped, tagger() };
 		}
 
-		return std::nullopt;
+		// TODO: error
+		fmt::print("reshape error; incompatible shapes\n");
+		std::abort();
+
+		return {};
 	}
 
 	template <std::integral ... Ts>
-	weakly_optional <Tensor> reshape(Ts ... sizes) const {
+	Tensor reshape(Ts ... sizes) const {
 		std::initializer_list <long int> other { (long int) sizes... };
 		return reshape(other);
 	}
 
 	// Transposing 2D tensors
-	weakly_optional <Tensor> transpose() const {
+	Tensor transpose() const {
 		if (shape->size() != 2)
-			return std::nullopt;
+			return {};
 
 		size_t rows = shape.value()[0];
 		size_t cols = shape.value()[1];
@@ -217,20 +230,20 @@ struct Tensor {
 	}
 
 	// Cloning tensors; does not transfer tracking
-	weakly_optional <Tensor> clone() const {
+	Tensor clone() const {
 		Resource cloned_buffer = *buffer.clone();
 		return Tensor { cloned_buffer, shape, tagger() };
 	}
 
 	// Slicing through a single dimension
-	weakly_optional <Tensor> slice(size_t start, size_t end, size_t dim = 0) {
+	Tensor slice(size_t start, size_t end, size_t dim = 0) {
 		// TODO: allow negatives
 		if (dim >= shape->size())
-			return std::nullopt;
+			return {};
 
 		// NOTE: End is not inclusive
 		if (start >= end || start > shape.value()[dim] || end > shape.value()[dim])
-			return std::nullopt;
+			return {};
 
 		size_t prod_before = 1;
 		size_t prod_after = 1;
@@ -258,61 +271,61 @@ struct Tensor {
 	}
 
 	// Blank tensor of a given shape; no memset-ing
-	static weakly_optional <Tensor> blank(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+	static Tensor blank(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		if (auto buffer = Resource::from(shape.elements(), type, device))
 			return Tensor { *buffer, shape, tagger() };
 
-		return std::nullopt;
+		return {};
 	}
 
-	static weakly_optional <Tensor> blank_like(const Tensor &t) {
+	static Tensor blank_like(const Tensor &t) {
 		if (auto buffer = Resource::from(t.shape.value().elements(), t.buffer.type, t.buffer.device))
 			return Tensor { *buffer, t.shape.value(), tagger() };
 
-		return std::nullopt;
+		return {};
 	}
 
 	// Zero tensor
-	static weakly_optional <Tensor> zeros(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+	static Tensor zeros(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
 			buffer->memset(0.0f);
 			return Tensor { *buffer, shape, tagger() };
 		}
 
-		return std::nullopt;
+		return {};
 	}
 
-	static weakly_optional <Tensor> zeros_like(const Tensor &t) {
+	static Tensor zeros_like(const Tensor &t) {
 		if (auto buffer = Resource::from(t.shape.value().elements(), t.buffer.type, t.buffer.device)) {
 			buffer->memset(0.0f);
 			return Tensor { *buffer, t.shape.value(), tagger() };
 		}
 
-		return std::nullopt;
+		return {};
 	}
 
 	// One tensor
-	static weakly_optional <Tensor> ones(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+	static Tensor ones(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
 			buffer->memset(1.0f);
 			return Tensor { *buffer, shape, tagger() };
 		}
 
-		return std::nullopt;
+		return {};
 	}
 
-	static weakly_optional <Tensor> ones_like(const Tensor &t) {
+	static Tensor ones_like(const Tensor &t) {
 		if (auto buffer = Resource::from(t.shape.value().elements(), t.buffer.type, t.buffer.device)) {
 			buffer->memset(1.0f);
 			return Tensor { *buffer, t.shape.value(), tagger() };
 		}
 
-		return std::nullopt;
+		return {};
 	}
 
 	// Identity tensor
 	// TODO: expand for multidim tensors
-	static weakly_optional <Tensor> identity(size_t N, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+	static Tensor identity(size_t N, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		Shape shape { N, N };
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
 			buffer->memset(0.0f);
@@ -321,17 +334,17 @@ struct Tensor {
 			return Tensor { *buffer, shape, tagger() };
 		}
 
-		return std::nullopt;
+		return {};
 	}
 
 	// Tensor concatenation; explicit dimension must be provided
-	static weakly_optional <Tensor> concat(const Tensor &A, const Tensor &B, size_t dim) {
+	static Tensor concat(const Tensor &A, const Tensor &B, size_t dim) {
 		// TODO: allow for negative dim (int)
 
 		// Make sure the shapes match except for the provided dimension
 		// TODO: unpack the shapes here
 		if (A.shape->size() != B.shape->size())
-			return std::nullopt;
+			return {};
 
 		size_t sum = 0;
 		size_t nA = 0;
@@ -344,7 +357,7 @@ struct Tensor {
 				nB = B.shape.value()[i];
 				sum = nA + nB;
 			} else if (A.shape.value()[i] != B.shape.value()[i]) {
-				return std::nullopt;
+				return {};
 			} else {
 				prod_before *= (sum == 0) ? A.shape.value()[i] : 1;
 				prod_after *= (sum > 0) ? A.shape.value()[i] : 1;
@@ -354,7 +367,7 @@ struct Tensor {
 		Shape cat_shape = *A.shape;
 		cat_shape[dim] = sum;
 
-		Tensor out = *Tensor::zeros(cat_shape);
+		Tensor out = Tensor::zeros(cat_shape);
 
 		const Resource &rA = A.buffer;
 		const Resource &rB = B.buffer;
@@ -386,7 +399,7 @@ struct Tensor {
 
 	// Random matrix initializations
 	// TODO: dissociate from tensors
-	static weakly_optional <Tensor> xavier(size_t in, size_t out, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+	static Tensor xavier(size_t in, size_t out, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		Shape shape { in, out };
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
 			std::random_device rd;
@@ -397,11 +410,12 @@ struct Tensor {
 				buffer->ptr[i] = distribution(generator);
 			return Tensor { *buffer, shape, tagger() };
 		}
-		return std::nullopt;
+
+		return {};
 	}
 
 	// Random tensor
-	static weakly_optional <Tensor> randn(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
+	static Tensor randn(const Shape &shape, Resource::Type type = Resource::Type::f32, Resource::Device device = Resource::Device::eCPU) {
 		if (auto buffer = Resource::from(shape.elements(), type, device)) {
 			std::random_device rd;
 			std::mt19937 generator(rd());
@@ -410,13 +424,8 @@ struct Tensor {
 				buffer->ptr[i] = distribution(generator);
 			return Tensor { *buffer, shape, tagger() };
 		}
-		return std::nullopt;
-	}
 
-	// TODO: manual or implicit/automatic?
-	static void drop(Tensor &t) {
-		Resource::drop(t.buffer);
-		t.shape = std::nullopt;
+		return {};
 	}
 };
 

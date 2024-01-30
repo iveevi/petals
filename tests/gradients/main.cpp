@@ -283,8 +283,8 @@ int main()
 	struct LinearTester {
 		Linear linear = Linear::from(3, 5);
 
-		DynamicDeferred operator()(const Tensor &X) const {
-			return sum(DynamicDeferred::from((Function *) &linear, { X }));
+		DynamicDeferred operator()(const Tensor &X) {
+			return sum(DynamicDeferred::from(nop_ptr(&linear), { X }));
 		}
 	};
 

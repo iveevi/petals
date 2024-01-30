@@ -22,6 +22,8 @@ struct Optimizer {
 	Optimizer(const std::unordered_map <long long int, Tensor *> &dst, double alpha)
 			: destinations(dst), lr(alpha) {}
 
+	~Optimizer();
+
 	virtual void step(const Tape &) = 0;
 };
 

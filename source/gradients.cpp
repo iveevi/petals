@@ -1,6 +1,8 @@
 #include "gradients.hpp"
 #include "ops.hpp"
 
+Optimizer::~Optimizer() {}
+
 // Vanilla SGD optimizer
 SGD SGD::from(const std::vector <Tensor *> &dst, double lr)
 {

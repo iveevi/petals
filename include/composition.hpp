@@ -1,12 +1,30 @@
 #pragma once
 
 #include <variant>
+#include <memory>
 
 #include "autograd.hpp"
 
+// Helpers
+template <typename T>
+requires std::is_base_of_v <Function, T>
+static std::shared_ptr <Function> nop_ptr(T *ptr)
+{
+	return std::shared_ptr <Function> (ptr, [](Function *) {});
+}
+
+template <typename T>
+requires std::is_base_of_v <Function, T>
+static std::shared_ptr <Function> value_ptr(const T &t)
+{
+	using S = std::decay_t <T>;
+	return std::shared_ptr <Function> (new S(t));
+}
+
 // Function composition via lazy evaluation
 struct DynamicDeferred {
-	Function *ftn;
+	// Function *ftn;
+	std::shared_ptr <Function> ftn;
 
 	Tensor cached_eval;
 	std::vector <Tensor> cached_args;
@@ -68,14 +86,14 @@ struct DynamicDeferred {
 		return pullback(Tensor::ones({}), tape);
 	}
 
-	static DynamicDeferred from(Function *const ftn, const std::vector <std::variant <Tensor, DynamicDeferred>> &args) {
+	static DynamicDeferred from(const std::shared_ptr <Function> &ftn, const std::vector <std::variant <Tensor, DynamicDeferred>> &args) {
 		DynamicDeferred dd;
-		dd.ftn = ftn;
+		dd.ftn = std::move(ftn);
 		dd.args = args;
 		return dd;
 	}
 
-	static DynamicDeferred from_tensor_list(Function *const ftn, const std::vector <Tensor> &args) {
+	static DynamicDeferred from_tensor_list(const std::shared_ptr <Function> ftn, const std::vector <Tensor> &args) {
 		std::vector <std::variant <Tensor, DynamicDeferred>> vargs;
 		for (const auto &t : args)
 			vargs.push_back(t);
@@ -90,22 +108,25 @@ struct DynamicDeferred {
 // Function composition via chaining to construct a new function
 struct Chain;
 
-struct ChainProxy : std::vector <Function *> {
-	using std::vector <Function *> ::vector;
+struct ChainProxy : std::vector <std::shared_ptr <Function>> {
+	using std::vector <std::shared_ptr <Function>> ::vector;
 
 	operator Chain();
 };
 
-// TODO: return a conditional ptr
 template <typename T>
 requires std::is_base_of_v <Function, T>
-static Function *auto_allocate(T t) {
-	return new T(t);
+static std::shared_ptr <Function> auto_allocate(T t)
+{
+	if constexpr (std::is_lvalue_reference_v <T>)
+		return std::shared_ptr <Function> (&t, []() {});
+
+	return std::shared_ptr <Function> (new std::decay_t <T> (t));
 }
 
 template <typename A, typename B>
 requires std::is_base_of_v <Function, A> && std::is_base_of_v <Function, B>
-ChainProxy operator>>(const A &fa, const B &fb)
+ChainProxy operator>>(A fa, B fb)
 {
 	return { auto_allocate(fa), auto_allocate(fb) };
 }
@@ -123,20 +144,20 @@ struct Chain : Function {
 	using Function::Function;
 
 	std::vector <tensor_list> node_args;
-	std::vector <Function *> nodes;
+	std::vector <std::shared_ptr <Function>> nodes;
 
 	// Get parameters from all nodes
 	std::vector <Tensor *> parameters() override {
 		std::vector <Tensor *> ps;
-		for (Function *f : nodes) {
-			const auto &fps = f->parameters();
+		for (auto cpf : nodes) {
+			const auto &fps = cpf->parameters();
 			ps.insert(ps.end(), fps.begin(), fps.end());
 		}
 
 		return ps;
 	}
 
-	weakly_optional <Tensor> forward_args(const tensor_list &ts) override {
+	Tensor forward_args(const tensor_list &ts) override {
 		node_args = { ts };
 
 		Tensor out;
@@ -152,7 +173,7 @@ struct Chain : Function {
 	template <typename ... Args>
 	DynamicDeferred operator()(const Args & ...args) {
 		std::vector <std::variant <Tensor, DynamicDeferred>> ts { args... };
-		return DynamicDeferred::from(this, ts);
+		return DynamicDeferred::from(nop_ptr(this), ts);
 	}
 
 	tensor_list pullback_args(const tensor_list &args, const Tensor &delta, Tape &tape) const override {
@@ -188,7 +209,7 @@ struct Chain : Function {
 	}
 
 	// Generate string from list of functions
-	static std::string to_string(const std::vector <Function *> &nodes) {
+	static std::string to_string(const std::vector <std::shared_ptr <Function>> &nodes) {
 		std::string header = "chain [";
 		for (size_t i = 0; i < nodes.size(); i++) {
 			header += nodes[i]->tag;
@@ -199,7 +220,7 @@ struct Chain : Function {
 	}
 
 	// Chain from already allocated functions
-	static Chain from(const std::vector <Function *> &nodes) {
+	static Chain from(const std::vector <std::shared_ptr <Function>> &nodes) {
 		Chain chain(to_string(nodes));
 		chain.nodes = nodes;
 		return chain;
@@ -208,7 +229,7 @@ struct Chain : Function {
 	// Chain by creating duplicate functions on the heap
 	template <typename ... Args>
 	static Chain from(const Args & ...args) {
-		std::vector <Function *> nodes { auto_allocate(args)... };
+		std::vector <std::shared_ptr <Function>> nodes { auto_allocate(args)... };
 		Chain chain(to_string(nodes));
 		chain.nodes = nodes;
 		return chain;
