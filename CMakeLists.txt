@@ -9,6 +9,10 @@ include(FetchContent)
 FetchContent_Declare(fmt GIT_REPOSITORY https://github.com/fmtlib/fmt.git GIT_TAG master)
 FetchContent_MakeAvailable(fmt)
 
+FetchContent_Declare(googletest GIT_REPOSITORY https://github.com/google/googletest.git GIT_TAG v1.14.x)
+FetchContent_Declare(googlebenchmark GIT_REPOSITORY https://github.com/google/benchmark.git GIT_TAG main)
+FetchContent_MakeAvailable(googletest googlebenchmark)
+
 set(PETAL_SOURCES
 	source/tensor.cpp
 	source/gradients.cpp
@@ -18,11 +22,15 @@ set(PETAL_SOURCES
 
 add_library(petal SHARED ${PETAL_SOURCES})
 
-include_directories(include ${fmt_SOURCE_DIR}/include)
+include_directories(include ${fmt_SOURCE_DIR}/include ${googlebenchmark_SOURCE_DIR}/include)
+
 add_executable(features-tests tests/features/main.cpp)
 add_executable(gradients-tests tests/gradients/main.cpp)
 add_executable(mnist tests/mnist/main.cpp)
+add_executable(ops-benchmark tests/benchmark/main.cpp)
+# Allocator benchmark
 
 target_link_libraries(features-tests petal fmt::fmt)
 target_link_libraries(gradients-tests petal fmt::fmt)
 target_link_libraries(mnist petal fmt::fmt)
+target_link_libraries(ops-benchmark petal fmt::fmt benchmark::benchmark)

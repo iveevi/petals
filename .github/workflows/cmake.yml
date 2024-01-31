@@ -30,3 +30,6 @@ jobs:
 
     - name: Gradients
       run: ${{github.workspace}}/build/gradients-tests
+
+    - name: Benchmarks
+      run: ${{github.workspace}}/build/ops-benchmark --benchmark_time_unit=ms
