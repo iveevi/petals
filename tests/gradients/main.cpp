@@ -2,6 +2,8 @@
 
 #include <fmt/color.h>
 
+#include <gtest/gtest.h>
+
 #include "composition.hpp"
 #include "tensor.hpp"
 #include "autograd.hpp"
@@ -41,7 +43,7 @@ bool buffer_close(const Resource &A, const Resource &B, float tolerance)
 
 // Generic function pullback checking
 // TODO: arbitrary shapes, number of args, etc.
-bool check_pullback(const std::function <DynamicDeferred (const Tensor &)> &f)
+bool check_pullback(const std::function <DynamicDeferred (const Tensor &)> &f, bool printing)
 {
 	constexpr float epsilon = 1e-2f;
 
@@ -73,33 +75,15 @@ bool check_pullback(const std::function <DynamicDeferred (const Tensor &)> &f)
 	}
 
 
-	fmt::print("\nX: {} -> Y: {}, dY: {}\n", X, eY, dY);
-	fmt::print("AD dX: {}\n", dX);
-	fmt::print("FD dX: {}\n", gt_dX);
+	if (printing) {
+		fmt::print("\nX: {} -> Y: {}, dY: {}\n", X, eY, dY);
+		fmt::print("AD dX: {}\n", dX);
+		fmt::print("FD dX: {}\n", gt_dX);
+	}
 
-	return buffer_close(dX.buffer, gt_dX.buffer, epsilon * epsilon);
+	return buffer_close(dX.buffer, gt_dX.buffer, epsilon);
 }
 
-bool test_square()
-{
-	Tape tape;
-	Tensor X = Tensor::randn({ 3, 3 });
-	Tensor S = ops::square.forward(X);
-	Tensor dS = Tensor::ones_like(S);
-	Tensor dX = ops::square.pullback_args({ X }, dS, tape)[0];
-
-	// TODO: print only first time, except for the failed case
-	// then run experiments again
-	fmt::print("X: {}\nS: {}\ndS: {}\ndX: {}\n", X, S, dS, dX);
-
-	Tensor gt_dX = 2 * X;
-	fmt::print("gt dX: {}\n", gt_dX);
-
-	// TODO: buffer check here
-	return buffer_cheq(dX.buffer, gt_dX.buffer);
-}
-
-// TODO: gradient checking with tape and lamda
 // TODO: delta checking on arbitrary functions
 bool test_linear()
 {
@@ -107,7 +91,7 @@ bool test_linear()
 	constexpr size_t HEIGHT = 15;
 	constexpr size_t BATCH = 20;
 
-	constexpr float epsilon = 1e-2f;
+	constexpr float epsilon = 1e-6f;
 
 	Tensor X = Tensor::randn({ BATCH, WIDTH });
 	Tensor Y = Tensor::randn({ BATCH, HEIGHT });
@@ -147,7 +131,7 @@ bool test_linear()
 	Tensor dW = tape[linear.W.tag];
 	fmt::print("AD dW = {}\n", dW);
 
-	return buffer_close(dW.buffer, gt_dW.buffer, epsilon * epsilon);
+	return buffer_close(dW.buffer, gt_dW.buffer, epsilon);
 }
 
 // TODO: generic gradient checking for parameters
@@ -157,7 +141,7 @@ bool test_dnn()
 	constexpr size_t HEIGHT = 4;
 	constexpr size_t BATCH  = 2;
 
-	constexpr float epsilon = 1e-2f;
+	constexpr float epsilon = 1e-6f;
 
 	Tensor X = Tensor::randn({ BATCH, WIDTH });
 	Tensor Y = Tensor::randn({ BATCH, HEIGHT });
@@ -208,9 +192,10 @@ bool test_dnn()
 
 		Tensor dW = tape[linear2.W.tag];
 		fmt::print("AD dW = {}\n", dW);
-	}
 
-	// return buffer_close(dW.buffer, gt_dW.buffer, epsilon * epsilon);
+		if (!buffer_close(dW.buffer, gt_dW.buffer, epsilon))
+			return false;
+	}
 
 	// Gradient checking the first layer
 	{
@@ -256,30 +241,63 @@ bool test_dnn()
 
 		Tensor dW = tape[linear1.W.tag];
 		fmt::print("AD dW = {}\n", dW);
+
+		if (!buffer_close(dW.buffer, gt_dW.buffer, epsilon))
+			return false;
 	}
 
 	return true;
-	// return buffer_close(dW.buffer, gt_dW.buffer, epsilon * epsilon);
 }
 
-void robust_test(const std::function <bool ()> &test, size_t iterations = 100)
+bool robust_test(const std::function <bool (bool)> &test, size_t iterations = 100)
 {
 	for (size_t i = 0; i < iterations; i++) {
-		if (!test()) {
-			fmt::print("test failed\n");
-			break;
-		}
+		if (!test(i == 0))
+			return false;
 	}
+
+	return true;
 }
 
-int main()
+TEST(SumTest, Delta)
 {
-	check_pullback([](const Tensor &X) { return sum(X); });
-	check_pullback([](const Tensor &X) { return sum(square(X)); });
-	check_pullback([](const Tensor &X) { return sum(relu(X)); });
-	check_pullback([](const Tensor &X) { return sum(sigmoid(X)); });
-	check_pullback([](const Tensor &X) { return sum(softmax(X)); });
+	auto ftn = [](const Tensor &X) { return sum(X); };
+	auto chk = [ftn](bool printing) { return check_pullback(ftn, printing); };
 
+	ASSERT_TRUE(robust_test(chk));
+}
+
+TEST(SquareTest, Delta)
+{
+	auto ftn = [](const Tensor &X) { return sum(square(X)); };
+	auto chk = [ftn](bool printing) { return check_pullback(ftn, printing); };
+
+	ASSERT_TRUE(robust_test(chk));
+}
+
+TEST(ReLUTest, Delta)
+{
+	auto ftn = [](const Tensor &X) { return sum(relu(X)); };
+	auto chk = [ftn](bool printing) { return check_pullback(ftn, printing); };
+
+	ASSERT_TRUE(robust_test(chk));
+}
+
+TEST(SigmoidTest, Delta)
+{
+	auto ftn = [](const Tensor &X) { return sum(sigmoid(X)); };
+	auto chk = [ftn](bool printing) { return check_pullback(ftn, printing); };
+
+	ASSERT_TRUE(robust_test(chk));
+}
+
+TEST(LinearTest, GradientChecking)
+{
+	ASSERT_TRUE(test_linear());
+}
+
+TEST(LinearTest, Delta)
+{
 	struct LinearTester {
 		Linear linear = Linear::from(3, 5);
 
@@ -288,10 +306,13 @@ int main()
 		}
 	};
 
-	check_pullback(LinearTester {});
-	test_dnn();
+	LinearTester lt;
+	auto chk = [lt](bool printing) { return check_pullback(lt, printing); };
 
-	// robust_test(test_square);
-	// robust_test(test_linear);
-	// test_linear();
+	ASSERT_TRUE(robust_test(chk));
+}
+
+TEST(DNNTest, GradientChecking)
+{
+	ASSERT_TRUE(test_dnn());
 }

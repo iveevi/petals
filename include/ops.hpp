@@ -199,7 +199,7 @@ struct _sqrt : Function {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
 		// TODO: element wise unary kernel
-		for (size_t i = 0; i < A.shape->elements(); i++) {
+		for (size_t i = 0; i < A.buffer.elements; i++) {
 			double x = A.buffer.ptr[i];
 			out.buffer.ptr[i] = std::sqrt(x);
 		}
@@ -218,8 +218,11 @@ struct _sum : Function {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank({});
 		double sum = 0.0f;
-		for (size_t i = 0; i < A.shape->elements(); i++)
+
+		size_t elements = A.buffer.elements;
+		for (size_t i = 0; i < elements; i++)
 			sum += A.buffer.ptr[i];
+
 		out.buffer.ptr[0] = sum;
 		return out;
 	}
@@ -227,7 +230,9 @@ struct _sum : Function {
 	tensor_list pullback_args(const tensor_list &ts, const Tensor &delta, Tape &tape) const override {
 		const Tensor &A = ts[0];
 		Tensor out = Tensor::blank_like(A);
-		for (size_t i = 0; i < A.shape->elements(); i++)
+
+		size_t elements = A.buffer.elements;
+		for (size_t i = 0; i < elements; i++)
 			out.buffer.ptr[i] = delta.buffer.ptr[0];
 
 		if (tape.contains(A.tag))

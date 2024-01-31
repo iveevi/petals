@@ -13,7 +13,7 @@ enum ewop_mode {
 template <ewop_mode op>
 void cpu_kernel_ewop(const Resource &A, const Resource &B, Resource &C)
 {
-	// TODO: openmp
+	#pragma omp parallel for
 	for (size_t i = 0; i < A.elements; i++) {
 		if constexpr (op == kadd)
 			C.ptr[i] = A.ptr[i] + B.ptr[i];

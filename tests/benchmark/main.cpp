@@ -20,11 +20,11 @@ BENCHMARK(BM_randn);
 	}                                                   \
 	BENCHMARK(BM_##ftn);
 
-BM_Unary(relu,    100, 100)
-BM_Unary(sigmoid, 100, 100)
-BM_Unary(softmax, 100, 100)
-BM_Unary(square,  100, 100)
-BM_Unary(sum,     100, 100)
+BM_Unary(relu,    100, 100, 100)
+BM_Unary(sigmoid, 100, 100, 100)
+BM_Unary(softmax, 100, 100, 100)
+BM_Unary(square,  100, 100, 100)
+BM_Unary(sum,     100, 100, 100)
 
 // Binary operations
 #define BM_Binary(ftn, ...)                                 \
@@ -36,10 +36,10 @@ BM_Unary(sum,     100, 100)
 	}                                                   \
 	BENCHMARK(BM_##ftn);
 
-BM_Binary(add,    100, 100)
-BM_Binary(sub,    100, 100)
-BM_Binary(mul,    100, 100)
-BM_Binary(div,    100, 100)
+BM_Binary(add,    100, 100, 100)
+BM_Binary(sub,    100, 100, 100)
+BM_Binary(mul,    100, 100, 100)
+BM_Binary(div,    100, 100, 100)
 
 // Floating point combinations
 #define BM_Unary_Custom(ftn, ...)                           \
@@ -51,8 +51,8 @@ BM_Binary(div,    100, 100)
 	}                                                   \
 	BENCHMARK(BM_##ftn);
 
-BM_Unary_Custom(_addk, 100, 100);
-BM_Unary_Custom(_scalek, 100, 100);
+BM_Unary_Custom(_addk,   100, 100, 100);
+BM_Unary_Custom(_scalek, 100, 100, 100);
 
 // TODO: Pullbacks
 
